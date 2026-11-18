@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import binascii
 import gzip
 import hashlib
 import json
 import os
 import platform
 import re
+import socket
 import time
 import uuid
 from typing import Literal
@@ -299,12 +302,22 @@ def source_url(url):
     raise HTTPException(422, "请输入有效的 HTTP(S) 订阅地址")
 
 
-async def download(url):
+def local_proxy():
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, trust_env=False,
+        with socket.create_connection(("127.0.0.1", PROXY_PORT), timeout=0.3):
+            return f"http://127.0.0.1:{PROXY_PORT}"
+    except OSError:
+        return None
+
+
+async def fetch(url, proxy):
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=8), follow_redirects=True,
+                                     proxy=proxy, trust_env=False,
                                      headers={"User-Agent":"mihomo"}) as client:
             async with client.stream("GET", url) as response:
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    raise HTTPException(502, f"订阅地址返回 HTTP {response.status_code}")
                 content = bytearray()
                 async for chunk in response.aiter_bytes():
                     content.extend(chunk)
@@ -316,11 +329,50 @@ async def download(url):
                     if key in ("upload", "download", "total", "expire") and re.fullmatch(r"[0-9]{1,18}", value):
                         usage[key] = int(value)
                 return bytes(content).decode("utf-8-sig"), usage
-    except (httpx.HTTPError, UnicodeError) as error:
-        raise HTTPException(502, "无法下载 Clash / Mihomo 订阅") from error
+    except HTTPException:
+        raise
+    except httpx.TimeoutException:
+        raise HTTPException(502, "订阅地址连接超时") from None
+    except httpx.HTTPError as error:
+        raise HTTPException(502, f"无法连接订阅地址（{type(error).__name__}）") from None
+    except UnicodeError:
+        raise HTTPException(502, "订阅内容不是 UTF-8 文本") from None
+
+
+async def download(url):
+    try:
+        return await fetch(url, None)
+    except HTTPException as direct:
+        # Only transport failures are worth retrying; an HTTP status is definitive.
+        if direct.status_code == 413 or str(direct.detail).startswith("订阅地址返回 HTTP"):
+            raise
+        # A blocked network often still works through the local Mihomo mixed port.
+        proxy = local_proxy()
+        if not proxy:
+            raise
+        try:
+            return await fetch(url, proxy)
+        except HTTPException as proxied:
+            raise HTTPException(502, f"直连失败（{direct.detail}），经本机代理仍失败（{proxied.detail}）") from None
+
+
+def node_list(text):
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", compact):
+        return False
+    try:
+        raw = base64.b64decode(compact + "=" * (-len(compact) % 4), altchars=b"-_")
+        decoded = raw.decode("utf-8")
+    except (binascii.Error, ValueError, UnicodeDecodeError):
+        return False
+    return bool(re.search(r"(?:^|\n)\s*(?:ss|ssr|vmess|vless|trojan|hysteria2?|tuic)://", decoded))
 
 
 async def checked(text, identity):
+    if node_list(text):
+        raise HTTPException(422, "订阅返回的是 Base64 节点列表，请改用机场的 Clash / Mihomo 订阅链接，或直接粘贴 YAML")
+    if re.match(r"\s*<(!doctype|html)", text[:128], re.I):
+        raise HTTPException(422, "订阅地址返回了网页，可能需要登录或链接已失效")
     try:
         parsed = yaml.safe_load(text)
         if broker.socket_path():

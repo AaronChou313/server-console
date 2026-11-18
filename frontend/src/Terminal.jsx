@@ -130,15 +130,19 @@ function TerminalView({id, font, family, connectRef, status}) {
 
 async function copyText(value) {
   if (!value) return false
-  if (navigator.clipboard?.writeText) {
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
     try {await navigator.clipboard.writeText(value); return true} catch {}
   }
   const input = document.createElement('textarea')
   input.value = value
-  input.style.cssText = 'position:fixed;left:0;top:0;opacity:0'
+  input.setAttribute('readonly', '')
+  input.style.cssText = 'position:fixed;left:0;top:-1000px;opacity:0.01'
   document.body.appendChild(input)
+  input.focus()
   input.select()
-  const result = document.execCommand('copy')
+  input.setSelectionRange(0, value.length)
+  let result = false
+  try {result = document.execCommand('copy')} catch {}
   input.remove()
   return result
 }
@@ -325,14 +329,15 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
           {current.managed === false && <Button title="发送 Esc，退出 Zellij 的滚动或快捷键模式"
             disabled={status !== '已连接'} onClick={() => terminal.current?.send('\x1b')}>恢复输入</Button>}
           <Button icon={Keyboard} title="终端快捷键" aria-label="终端快捷键" onClick={() => setKeys(!keys)}/>
-          <Button icon={Copy} title="复制选择" aria-label="复制选择" onClick={() => copy(terminal.current?.selection())}/>
-          <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" onClick={paste}/>
+          <Button icon={Copy} title="复制选择" aria-label="复制选择" onMouseDown={event => event.preventDefault()}
+            onClick={() => copy(terminal.current?.selection())}/>
+          <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" onMouseDown={event => event.preventDefault()} onClick={paste}/>
         </div></>}
       </div>
       {current && <div className={'terminal-keys' + (keys ? ' show' : '')}>{[['Esc','\x1b'], ['Tab','\t'], ['Ctrl+C','\x03'], ['Ctrl+D','\x04'], ['Ctrl+P','\x10'], ['Ctrl+N','\x0e'], ['↑','\x1b[A', ArrowUp], ['↓','\x1b[B', ArrowDown], ['←','\x1b[D'], ['→','\x1b[C'], ['Enter','\r']].map(([label, value, Icon]) =>
         <Button key={label} icon={Icon} aria-label={label} onMouseDown={e => e.preventDefault()} onClick={() => terminal.current?.send(value)}>{Icon ? '' : label}</Button>)}</div>}
       {attachment && <div className="terminal-attachment"><label>已上传<input aria-label="服务器文件路径" readOnly value={attachment} onFocus={e => e.target.select()}/></label>
-        <Button icon={Copy} aria-label="复制文件路径" onClick={() => copy(attachment)}/><Button disabled={!current} onClick={() => terminal.current?.paste(attachment)}>插入路径</Button><Button icon={X} aria-label="关闭文件路径" onClick={() => setAttachment('')}/>
+        <Button icon={Copy} aria-label="复制文件路径" onMouseDown={event => event.preventDefault()} onClick={() => copy(attachment)}/><Button disabled={!current} onClick={() => terminal.current?.paste(attachment)}>插入路径</Button><Button icon={X} aria-label="关闭文件路径" onClick={() => setAttachment('')}/>
       </div>}
       {showSessions && <section id="terminal-sessions" className="card sessions" ref={sessionPanel} tabIndex={-1}
         aria-labelledby="terminal-sessions-title" onKeyDown={event => {

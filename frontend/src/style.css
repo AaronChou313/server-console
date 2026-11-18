@@ -378,3 +378,5 @@ td { font-family: var(--mono); }
 .app-tile-text small { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-tile-side { display: grid; justify-items: end; gap: 4px; flex: none; color: var(--muted); }
 .app-tile:hover .app-tile-side svg { color: var(--accent); }
+
+.form-note { color: var(--muted); font-size: 11px; line-height: 1.6; margin: -3px 0 2px; }
