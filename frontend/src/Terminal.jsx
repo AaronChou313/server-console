@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react'
+import React, {useCallback, useEffect, useRef, useState} from 'react'
 import {ArrowDown, ArrowUp, ClipboardPaste, Copy, FileUp, History, Keyboard, List, Maximize, Minimize, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, SquareTerminal, X} from 'lucide-react'
 import {Terminal} from '@xterm/xterm'
 import {FitAddon} from '@xterm/addon-fit'
@@ -7,19 +7,33 @@ import {api, useResource} from './api'
 import {Button, Empty, ErrorNotice, Modal, PageTitle} from './ui'
 
 const encoder = new TextEncoder()
+const clipboardDecoder = new TextDecoder('utf-8', {fatal: true})
+
+function decodeClipboard(data) {
+  const separator = data.indexOf(';')
+  if (separator < 0 || !/^[cp]?$/.test(data.slice(0, separator))) return ''
+  const encoded = data.slice(separator + 1)
+  if (!encoded || encoded === '?' || encoded.length > 1_400_000) return ''
+  try {
+    return clipboardDecoder.decode(Uint8Array.from(atob(encoded), byte => byte.charCodeAt(0)))
+  } catch {
+    return ''
+  }
+}
 const terminalColors = {
   background: '#10131a', foreground: '#e9edf6', cursor: '#a9baff', selectionBackground: '#3e5689',
   black: '#171c26', red: '#f17983', green: '#8acfaa', yellow: '#f1ca83', blue: '#82abff',
   magenta: '#cda0f0', cyan: '#75d0dd', white: '#e2e8f0', brightBlack: '#7f899e', brightWhite: '#f8fafc',
 }
 
-function TerminalView({id, font, family, connectRef, status}) {
+function TerminalView({id, font, family, connectRef, status, onCopy}) {
   const mount = useRef(null)
   useEffect(() => {
     const el = mount.current
     const term = new Terminal({
       fontFamily: family, fontSize: font, lineHeight: 1.18, theme: terminalColors,
       cursorBlink: true, scrollback: 8000, allowProposedApi: false, macOptionIsMeta: true,
+      macOptionClickForcesSelection: true,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -45,11 +59,42 @@ function TerminalView({id, font, family, connectRef, status}) {
     const binary = term.onBinary(input => {
       if (isReady()) socket.send(Uint8Array.from(input, char => char.charCodeAt(0)))
     })
+    let dragStart, clipboardGestureUntil = 0, zellijSelection = ''
+    function startSelection(event) {
+      if (!event.isTrusted || event.button !== 0) return
+      dragStart = {x: event.clientX, y: event.clientY}
+      zellijSelection = ''
+      clipboardGestureUntil = 0
+    }
+    function endSelection(event) {
+      if (!event.isTrusted || event.button !== 0 || !dragStart) return
+      if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) >= 3) {
+        clipboardGestureUntil = performance.now() + 2500
+      }
+      dragStart = null
+    }
+    const clipboard = term.parser.registerOscHandler(52, data => {
+      // OSC 52 can also come from ordinary program output. Require a fresh
+      // local drag and only accept a single clipboard write for that gesture.
+      if (!clipboardGestureUntil || performance.now() > clipboardGestureUntil) return true
+      const value = decodeClipboard(data)
+      if (!value) return true
+      clipboardGestureUntil = 0
+      zellijSelection = value
+      onCopy(value, true)
+      return true
+    })
+    el.addEventListener('mousedown', startSelection, true)
+    document.addEventListener('mouseup', endSelection, true)
+    const selection = () => term.getSelection() || zellijSelection
     term.attachCustomKeyEventHandler(event => {
       if (event.type !== 'keydown') return true
       const key = event.key.toLowerCase()
       if ((event.metaKey || (event.ctrlKey && event.shiftKey)) && ['c', 'v'].includes(key)) {
-        if (key === 'c' && term.hasSelection()) copyText(term.getSelection())
+        if (key === 'c' && selection()) {
+          event.preventDefault()
+          onCopy(selection())
+        }
         return false
       }
       return true
@@ -131,7 +176,7 @@ function TerminalView({id, font, family, connectRef, status}) {
     }
     connectRef.current = {
       focus: () => term.focus(),
-      selection: () => term.getSelection(),
+      selection,
       isReady,
       send: value => {send(value); term.focus()},
       paste: value => {if (isReady()) {term.paste(value); term.focus()}},
@@ -163,6 +208,9 @@ function TerminalView({id, font, family, connectRef, status}) {
       document.removeEventListener('visibilitychange', visible)
       clearInterval(heartbeat)
       observer.disconnect()
+      el.removeEventListener('mousedown', startSelection, true)
+      document.removeEventListener('mouseup', endSelection, true)
+      clipboard.dispose()
       clearTimeout(retry)
       cancelAnimationFrame(frame)
       dropSocket()
@@ -171,7 +219,7 @@ function TerminalView({id, font, family, connectRef, status}) {
       resize.dispose()
       term.dispose()
     }
-  }, [id, connectRef, status])
+  }, [id, connectRef, status, onCopy])
   useEffect(() => {connectRef.current?.font(font, family)}, [font, family, connectRef])
   return <div ref={mount} className="terminal-screen" aria-label="交互式终端"/>
 }
@@ -186,7 +234,8 @@ async function copyText(value) {
   input.setAttribute('readonly', '')
   input.style.cssText = 'position:fixed;left:0;top:-1000px;opacity:0.01'
   const focused = document.activeElement
-  document.body.appendChild(input)
+  const container = document.fullscreenElement || document.body
+  container.appendChild(input)
   input.focus()
   input.select()
   input.setSelectionRange(0, value.length)
@@ -254,7 +303,9 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
   const [keys, setKeys] = useState(false)
   const [showSessions, setShowSessions] = useState(false)
   const [copyNotice, setCopyNotice] = useState('')
+  const [copyFallback, setCopyFallback] = useState('')
   const terminal = useRef(null), file = useRef(null), workspace = useRef(null)
+  const copyField = useRef(null)
   const sessionPanel = useRef(null), sessionToggle = useRef(null)
   const title = kind === 'codex' ? 'Codex' : 'Web 终端'
   const matching = (resource.data || []).filter(item => kind === 'shell' || item.kind === kind)
@@ -285,6 +336,12 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
     const timer = setTimeout(() => setCopyNotice(''), 2900)
     return () => clearTimeout(timer)
   }, [copyNotice])
+
+  useEffect(() => {
+    if (!copyFallback) return
+    copyField.current.focus()
+    copyField.current.select()
+  }, [copyFallback])
 
   function open(item) {
     setTabs(list => list.some(tab => tab.id === item.id) ? list : [...list, item])
@@ -328,9 +385,19 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
       setAttachment(result.path)
     } catch (e) {setError(e.message)}
   }
-  async function copy(value) {
-    setCopyNotice(await copyText(value) ? '已复制' : value ? '复制失败，请手动复制' : '请先选择终端文字')
-  }
+  const copy = useCallback(async (value, automatic = false) => {
+    if (!value) {
+      setCopyNotice('请先选择终端文字')
+      return
+    }
+    if (await copyText(value)) {
+      setCopyNotice('已复制到本机')
+    } else if (automatic) {
+      setCopyNotice('已选中，点击复制')
+    } else {
+      setCopyFallback(value)
+    }
+  }, [])
   async function paste() {
     const target = terminal.current
     try {
@@ -383,7 +450,7 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
         <Button icon={full ? Minimize : Maximize} title={full ? '退出全屏' : '全屏终端'} aria-label={full ? '退出全屏' : '全屏终端'} onClick={toggleFull}/>
         <input ref={file} hidden type="file" onChange={e => {upload(e.target.files[0]); e.target.value = ''}}/>
       </div>
-      {current ? <TerminalView key={current.id} id={current.id} font={font} family={family} connectRef={terminal} status={setStatus}/> :
+      {current ? <TerminalView key={current.id} id={current.id} font={font} family={family} connectRef={terminal} status={setStatus} onCopy={copy}/> :
         <Empty icon={SquareTerminal} title="没有打开的会话">
           {matching.length > 0 ? <Button icon={List} onClick={() => setShowSessions(true)}>查看会话</Button>
             : focusMode && canCreate && <Button icon={Plus} onClick={() => setDialog('new')}>新建会话</Button>}
@@ -395,7 +462,7 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
           {current.managed === false && <Button title="发送 Esc，退出 Zellij 的滚动或快捷键模式"
             disabled={status !== '已连接'} onClick={() => terminal.current?.send('\x1b')}>恢复输入</Button>}
           <Button icon={Keyboard} title="终端快捷键" aria-label="终端快捷键" onClick={() => setKeys(!keys)}/>
-          <Button icon={Copy} title="复制选择" aria-label="复制选择" onMouseDown={event => event.preventDefault()}
+          <Button icon={Copy} title="复制选中文字（鼠标模式下按住 Shift，Mac 上按住 Option 再拖选）" aria-label="复制选择" onMouseDown={event => event.preventDefault()}
             onClick={() => copy(terminal.current?.selection())}/>
           <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" disabled={status !== '已连接'} onMouseDown={event => event.preventDefault()} onClick={paste}/>
         </div></>}
@@ -426,6 +493,12 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
     </section>
     {dialog && <SessionForm kind={kind} mode={dialog} onClose={() => setDialog('')} onCreate={open}/>}
     {end && <Modal title="结束 Zellij 会话" onClose={() => {if (!busy) setEnd(null)}}><p>结束「{end.name}」将终止其中正在运行的进程。</p><ErrorNotice>{error}</ErrorNotice><div className="form-actions"><Button disabled={busy} onClick={() => setEnd(null)}>取消</Button><Button variant="danger solid" disabled={busy} onClick={stop}>{busy ? '正在结束…' : canForce ? '强制结束' : '结束会话'}</Button></div></Modal>}
+    {copyFallback && <Modal title="复制终端文字" onClose={() => setCopyFallback('')}>
+      <div className="form">
+        <p>浏览器限制了网页写入剪贴板。文字已选中，可以用系统的复制快捷键或长按复制。</p>
+        <textarea ref={copyField} aria-label="待复制文字" rows={6} readOnly value={copyFallback}/>
+      </div>
+    </Modal>}
     {pasteBox && <Modal title="粘贴到终端" onClose={() => setPasteBox(false)}><form className="form" onSubmit={submitPaste}><textarea aria-label="粘贴内容" rows={5} placeholder="在此粘贴文字" autoFocus value={pasteValue} onChange={e => setPasteValue(e.target.value)}/><div className="form-actions"><button className="button primary" disabled={status !== '已连接'}>发送到终端</button></div></form></Modal>}
   </div>
 }

@@ -32,7 +32,6 @@ default_mode "locked"
 pane_frames false
 show_startup_tips false
 show_release_notes false
-copy_command ""
 web_sharing "disabled"
 session_serialization false
 '''

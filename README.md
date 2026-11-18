@@ -348,7 +348,7 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 - 「运行中的会话」可附着到原会话。关闭标签、刷新页面和网络重连都会保留会话。「恢复历史」另建 Zellij 会话并调用 `codex resume`。
 - 「结束」会请求 Zellij 退出指定会话。会话卡住时，在同一个对话框里可以选择「强制结束」，其中运行的进程会被中止。
 - 新会话默认使用 Zellij 的 Locked 模式；需要 Zellij 快捷键时按 `Ctrl+g`。
-- 复制用终端工具栏；TUI 开启鼠标模式时先按住 `Shift` 拖选。手机底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 键。
+- 新建会话支持拖选后复制到浏览器所在设备。若网页写入剪贴板被限制，点击工具栏「复制选择」。旧会话或 TUI 捕获鼠标时，Windows/Linux 按住 `Shift`、Mac 按住 `Option` 再拖选。手机底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 键。
 - 单文件上传上限 25 MiB，保存在 `~/.config/server-console/uploads/`。
 
 ### 我的应用
@@ -419,7 +419,7 @@ sudo /usr/bin/python3 -I "$PWD/scripts/migrate_mihomo_macos.py"
 | Codex 登录失败 | 用 `codex login --device-auth`；需要代理时先设置 `HTTPS_PROXY` / `HTTP_PROXY` |
 | DSH 登录弹窗一闪而过 | DSH 账号登录使用回环回调，远程浏览器无法完成；优先在 DSH 设置里配置 API Key/提供方，或在能访问回调的本机完成登录 |
 | `./console logs` 没有输出 | 确认 `systemctl --user` 可用；root 部署且无独立 user journal 时可用 `journalctl _SYSTEMD_USER_UNIT=server-console.service -n 80 -f` |
-| 终端复制不了 | 先用工具栏「复制选择」；鼠标模式下按住 Shift 拖选；长期方案是 HTTPS |
+| 终端复制不了 | 旧会话可用 Shift（Mac 用 Option）拖选，再点工具栏「复制选择」。若浏览器限制写入，按弹窗提示手动复制 |
 
 ---
 
