@@ -367,3 +367,14 @@ td { font-family: var(--mono); }
 .button.proxy-latency.latency-warning { color: var(--warning); background: var(--warning-bg); }
 .button.proxy-latency.latency-bad { color: var(--danger); background: var(--danger-bg); }
 .proxy-log { padding: 6px 16px; }
+
+.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(275px, 100%), 1fr)); gap: 9px; padding: 15px 16px; }
+.app-tile { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); transition: border-color .15s, background .15s; }
+.app-tile:hover { border-color: var(--accent); background: var(--accent-soft); }
+.app-tile-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 9px; font-size: 16px; font-weight: 720; background: hsl(var(--hue, 220) 68% 93%); color: hsl(var(--hue, 220) 52% 34%); }
+:root[data-theme="dark"] .app-tile-icon { background: hsl(var(--hue, 220) 36% 21%); color: hsl(var(--hue, 220) 76% 78%); }
+.app-tile-text { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.app-tile-text strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-tile-text small { color: var(--muted); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-tile-side { display: grid; justify-items: end; gap: 4px; flex: none; color: var(--muted); }
+.app-tile:hover .app-tile-side svg { color: var(--accent); }

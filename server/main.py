@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
+from . import apps, docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
 from .runtime import ROOT, STATE, binary, config, private_dir, verify_password
 
 COOKIE = "sc_session"
@@ -32,7 +32,7 @@ def same_origin(connection):
 async def lifespan(_):
     await mihomo.restore()
     yield
-    await asyncio.gather(dsh.stop(), mihomo.stop())
+    await asyncio.gather(dsh.stop(), mihomo.stop(), apps.stop())
 
 
 app = FastAPI(title="Server Console", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -49,7 +49,7 @@ class WebAccess:
             if not authenticated(connection) or not same_origin(connection):
                 await send({"type": "websocket.close", "code": 4401})
                 return
-        elif kind == "http" and path.startswith(("/api/", "/dsh/")):
+        elif kind == "http" and path.startswith(("/api/", "/dsh/", "/apps/")):
             request = Request(scope)
             message = None
             status = 403
@@ -67,7 +67,7 @@ class WebAccess:
 
 
 app.add_middleware(WebAccess)
-for module in [host, terminal, docker, ssh, dsh, mihomo]:
+for module in [host, terminal, docker, ssh, dsh, mihomo, apps]:
     app.include_router(module.router)
 
 
@@ -144,7 +144,7 @@ async def upload(request: Request):
 
 @app.get("/{path:path}")
 def frontend(path: str):
-    if path in {"api", "ws", "dsh"} or path.startswith(("api/", "ws/", "dsh/")):
+    if path in {"api", "ws", "dsh", "apps"} or path.startswith(("api/", "ws/", "dsh/", "apps/")):
         raise HTTPException(404)
     actual = (DIST / path).resolve()
     if actual.is_relative_to(DIST) and actual.is_file():

@@ -1,9 +1,10 @@
 import React, {lazy, Suspense, useEffect, useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {ArrowRight, Box, Cable, ChevronDown, Command, LayoutDashboard, LogOut, Menu, Monitor, Moon, Network, Server, Settings, Sparkles, SquareTerminal, Sun, KeyRound, X} from 'lucide-react'
+import {ArrowRight, Box, Cable, ChevronDown, Command, LayoutDashboard, LayoutGrid, LogOut, Menu, Monitor, Moon, Network, Server, Settings, Sparkles, SquareTerminal, Sun, KeyRound, X} from 'lucide-react'
 import {api, useResource} from './api'
 import {Badge, Button, CardTitle, ErrorNotice, Loading, Modal, PageTitle} from './ui'
 import Overview from './Overview'
+import AppsPage from './AppsPage'
 import DshPage from './DshPage'
 import ProxyPage from './ProxyPage'
 import {DockerPage, NetworkPage, SSHPage} from './Management'
@@ -13,6 +14,7 @@ const TerminalPage = lazy(() => import('./Terminal'))
 
 const pages = {
   overview: [LayoutDashboard, '概览'],
+  apps: [LayoutGrid, '我的应用'],
   terminal: [SquareTerminal, '终端'],
   docker: [Box, 'Docker'],
   ssh: [KeyRound, 'SSH'],
@@ -126,7 +128,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
       <div className="sidebar-brand"><Brand/><Button icon={X} className="mobile-only" aria-label="关闭导航" onClick={() => setMobileNav(false)}/></div>
       <nav className="navigation" aria-label="主导航">
         <div className="nav-label">工作区</div>
-        {['overview', 'terminal', 'docker', 'ssh', 'network', 'proxy'].map(navLink)}
+        {['overview', 'apps', 'terminal', 'docker', 'ssh', 'network', 'proxy'].map(navLink)}
         <div className="nav-rule"/>
         <button className={'nav-link ai-group' + (isAI(page) ? ' ai-active' : '')} aria-expanded={aiOpen} onClick={() => setAiOpen(!aiOpen)}>
           <Sparkles size={17} strokeWidth={1.75}/><span>AI 工作台</span><ChevronDown className={aiOpen ? '' : 'closed'} size={14}/>
@@ -154,6 +156,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
         </div>
       </header>}
       {page === 'overview' && <Overview data={overview.data} error={overview.error} go={go}/>}
+      {page === 'apps' && <AppsPage/>}
       {isTerminal(page) && <Suspense fallback={<Loading/>}><TerminalPage key={page} kind={page === 'terminal' ? 'shell' : page} font={font} family={terminalFamily(fontFamily)}
         hidden={hidden} setHidden={setHidden} tabs={tabs} setTabs={setTabs} active={active} select={setActive} tools={tools.data}/></Suspense>}
       {page === 'dsh' && <DshPage/>}
