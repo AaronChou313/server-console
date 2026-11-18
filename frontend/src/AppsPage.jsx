@@ -37,8 +37,8 @@ export default function AppsPage() {
     <section className="card">
       <CardTitle icon={LayoutGrid} title="本机 Web 服务"/>
       {!data && !error && <Loading>正在扫描本机 Web 服务…</Loading>}
-      {data && apps.length === 0 && <Empty icon={Globe} title="没有检测到 Web 服务">
-        <p>服务监听 TCP 端口并返回 HTML 页面时才会出现在这里。启动服务后点击「重新扫描」。</p>
+      {data && apps.length === 0 && <Empty icon={Globe} title="没有检测到其他 Web 服务">
+        <p>Server Console 自身不会列出。本机有服务监听端口并返回 HTML 页面时会自动出现，也可以点击「重新扫描」。</p>
       </Empty>}
       {apps.length > 0 && <div className="apps-grid">{apps.map(app => <Tile key={app.port} app={app}/>)}</div>}
       {apps.length > 0 && <p className="section-note">列表每 30 秒自动刷新。回环地址上的服务经控制台临时转发：端口 10 分钟无活动自动关闭，且没有额外登录校验，请仅在同一 Tailnet 或可信局域网内使用。</p>}

@@ -93,8 +93,15 @@ def aggregate(rows):
     return items
 
 
+def probe_address(item):
+    addresses = item["addresses"]
+    if any(address in WILDCARD or loopback(address) for address in addresses):
+        return "127.0.0.1"
+    return sorted(addresses)[0]
+
+
 async def probe(client, item):
-    target = f"127.0.0.1:{item['port']}"
+    target = f"{host(probe_address(item))}:{item['port']}"
     try:
         async with client.stream("GET", f"http://{target}/",
                                  headers={"Host": target, "Accept": "text/html,application/xhtml+xml"}) as response:
