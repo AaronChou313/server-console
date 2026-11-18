@@ -8,6 +8,7 @@ import shutil
 import signal
 import struct
 import sys
+import tempfile
 import termios
 import uuid
 
@@ -70,10 +71,32 @@ async def sessions():
 async def create_session(kind, cwd, name, command):
     session = "sc-" + uuid.uuid4().hex[:12]
     async with LOCK:
-        code, out, err = await run(*zellij(), "attach", "--create-background", session,
-                                    "--", *command, cwd=cwd)
-        if code:
-            raise HTTPException(502, (err or out).strip() or "无法创建 Zellij 会话")
+        # Wait for the launcher itself. A background session must not keep a
+        # captured output pipe open while its first pane is running.
+        with tempfile.TemporaryFile() as output:
+            try:
+                launcher = await asyncio.create_subprocess_exec(
+                    *zellij(), "attach", "--create-background", session, "--", *command,
+                    cwd=cwd, env=ENV, stdin=asyncio.subprocess.DEVNULL, stdout=output, stderr=output,
+                )
+            except OSError as error:
+                raise HTTPException(502, "无法启动 Zellij") from error
+            try:
+                code = await asyncio.wait_for(launcher.wait(), 8)
+            except (asyncio.TimeoutError, asyncio.CancelledError) as error:
+                if launcher.returncode is None:
+                    try:
+                        launcher.kill()
+                    except ProcessLookupError:
+                        pass
+                    await launcher.wait()
+                if isinstance(error, asyncio.CancelledError):
+                    raise
+                raise HTTPException(504, "创建 Zellij 会话超时") from error
+            if code:
+                output.seek(0)
+                detail = output.read(4096).decode(errors="replace").strip()
+                raise HTTPException(502, detail or "无法创建 Zellij 会话")
         item = {"id": session, "name": name, "kind": kind, "cwd": str(cwd), "managed": True}
         items = metadata()
         items[session] = item
