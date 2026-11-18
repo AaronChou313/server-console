@@ -32,6 +32,12 @@ case "$command" in
   password|generate-password)
     "$python" -m server.runtime "$command"
     ;;
+  mihomo)
+    exec "$python" -m server.mihomo_ctl "$@"
+    ;;
+  install-mihomo-service)
+    exec "$python" -m server.mihomo_setup
+    ;;
   run)
     host="${SERVER_CONSOLE_HOST:-127.0.0.1}"
     port="${SERVER_CONSOLE_PORT:-9786}"
@@ -85,6 +91,9 @@ case "$command" in
                                    安装并启动当前用户的常驻服务
 ./console start|stop|restart|status|logs
                                    管理已安装的常驻服务
+./console mihomo status|start|stop|restart|rules|logs
+                                   直接管理独立 Mihomo 后台
+./console install-mihomo-service    Linux 安装独立 Mihomo 用户服务
 HELP
     ;;
   *) echo "未知命令：$command" >&2; exit 2;;

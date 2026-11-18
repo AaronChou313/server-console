@@ -41,7 +41,8 @@ def main():
         "SERVER_CONSOLE_PORT": str(args.port),
     }
     overrides = ["SERVER_CONSOLE_" + tool for tool in ("CODEX", "DSH", "DOCKER", "TAILSCALE", "ZELLIJ", "SSH", "MIHOMO")]
-    for name in ("CODEX_HOME", "DOCKER_HOST", "DOCKER_CONTEXT", *overrides):
+    for name in ("CODEX_HOME", "DOCKER_HOST", "DOCKER_CONTEXT",
+                 "SERVER_CONSOLE_MIHOMO_BROKER", *overrides):
         if name in os.environ:
             values[name] = os.environ[name]
     if args.manager == "launchd":

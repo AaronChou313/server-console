@@ -277,6 +277,9 @@ export default function ProxyPage() {
   const [problem, setProblem] = useState('')
   const [message, setMessage] = useState('')
   const running = data?.state === 'running'
+  const independent = data?.owner === 'service'
+  const engineReady = running || data?.engine_ready
+  const migration = data?.state === 'migration'
   const active = profiles.data?.items.find(item => item.active)
 
   function refresh() {
@@ -304,23 +307,27 @@ export default function ProxyPage() {
 
   return <div className="page">
     <PageTitle title="网络代理"><Button icon={RefreshCw} onClick={refresh}>刷新</Button></PageTitle>
-    <ErrorNotice>{error || profiles.error || (!pending && problem)}</ErrorNotice>
+    <ErrorNotice>{error || profiles.error || data?.error || (!pending && problem)}</ErrorNotice>
     {message && <p role="status">{message}</p>}
     {!data && !error && <Loading/>}
     {data && <section className="card">
       <CardTitle icon={Cable} title="Mihomo"><Badge tone={running ? 'good' : data.state === 'error' ? 'bad' : 'neutral'}>
-        {running ? '运行中' : data.state === 'error' ? '启动失败' : data.available ? '已停止' : '未安装'}
+        {running ? '运行中' : migration ? '待迁移' : data.state === 'error' ? '服务异常' : data.available ? '已停止' : '未安装'}
       </Badge></CardTitle>
       {data.available ? <div className="entry">
-        <div className="entry-text"><strong className="mono">127.0.0.1:{data.port}</strong><small>{[active?.name, data.version, modes[data.mode]].filter(Boolean).join(' · ') || '本机 HTTP / SOCKS5'}</small></div>
+        <div className="entry-text"><strong className="mono">{data.port ? '127.0.0.1:' + data.port : '本机 Mihomo'}</strong>
+          <small>{[independent && '独立服务', data.pid && 'PID ' + data.pid, active?.name, data.version, modes[data.mode]].filter(Boolean).join(' · ') || '本机 HTTP / SOCKS5'}</small></div>
         <div className="row-actions">
-          <Button icon={Download} disabled={!!busy} onClick={() => confirm('检查 Mihomo 更新', '若有新版本，将下载安装内核。运行中的代理会短暂重启。', '/engine')}>检查更新</Button>
+          {!independent && <Button icon={Download} disabled={!!busy} onClick={() => confirm('检查 Mihomo 更新', '若有新版本，将下载安装内核。运行中的代理会短暂重启。', '/engine')}>检查更新</Button>}
           {running ? <>
             <Button icon={RefreshCw} disabled={!!busy} onClick={() => confirm('重启 Mihomo', '代理连接会中断并重新建立。', '/restart')}>重启</Button>
-            <Button icon={Square} variant="danger" disabled={!!busy} onClick={() => confirm('停止 Mihomo', '正在使用代理的连接会断开。', '/stop')}>停止</Button>
-          </> : <Button icon={Play} variant="primary" disabled={!!busy} onClick={() => operate('/start')}>启动</Button>}
+            <Button icon={Square} variant="danger" disabled={!!busy} onClick={() => confirm(data.system_tun ? '停用系统代理' : '停止 Mihomo', '正在使用代理的连接会断开。', '/stop')}>{data.system_tun ? '停用系统代理' : '停止'}</Button>
+          </> : <Button icon={Play} variant="primary" disabled={!!busy || (independent && !data.service_online)}
+            onClick={() => operate('/start')}>{data.system_tun ? '启用系统代理' : '启动'}</Button>}
         </div>
-      </div> : <Empty icon={Cable} title="主机未找到 Mihomo">
+      </div> : migration ? <Empty icon={Cable} title="等待迁移 Mac 上已有的 Mihomo">
+        <p>现有代理仍在工作。完成系统服务迁移后，即可在这里管理当前配置。</p>
+      </Empty> : <Empty icon={Cable} title="主机未找到 Mihomo">
         <Button icon={Download} variant="primary" disabled={!!busy} onClick={() => operate('/engine')}>{busy === '/engine' ? '正在下载安装…' : '安装 Mihomo'}</Button>
         <a className="text-link" href="https://github.com/MetaCubeX/mihomo/releases" target="_blank" rel="noreferrer">Mihomo 发行版</a>
       </Empty>}
@@ -331,9 +338,9 @@ export default function ProxyPage() {
           aria-pressed={section === key} onClick={() => setSection(key)}>{label}</button>)}</nav>
       {section === 'profiles' ? <Profiles items={profiles.data?.items || []} running={running} busy={busy}
           add={() => setEditing({})} edit={setEditing} operate={operate} confirm={confirm}/>
-        : section === 'logs' || (running && ['rules', 'connections'].includes(section)) ?
+        : section === 'logs' || (engineReady && ['rules', 'connections'].includes(section)) ?
           <Inspection key={section} section={section} confirm={confirm}/>
-        : running ? <Nodes key={active?.updated || 'default'} data={data} busy={busy} operate={operate}/>
+        : engineReady ? <Nodes key={active?.updated || 'default'} data={data} busy={busy} operate={operate}/>
         : <section className="card"><Empty title="启动 Mihomo 后可使用此功能"/></section>}
     </>}
     {editing && <ProfileEditor item={editing.id ? editing : null} close={() => setEditing(null)} saved={() => {setEditing(null); refresh()}}/>}

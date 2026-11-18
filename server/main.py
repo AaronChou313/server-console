@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import docker, dsh, host, mihomo, ssh, terminal
+from . import docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
 from .runtime import ROOT, STATE, binary, config, private_dir, verify_password
 
 COOKIE = "sc_session"
@@ -117,7 +117,7 @@ def logout(request: Request):
 @app.get("/api/tools")
 def tools():
     return {**{name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale")},
-            "mihomo": bool(mihomo.executable())}
+            "mihomo": bool(mihomo.executable() or mihomo_broker.socket_path())}
 
 
 @app.post("/api/uploads")

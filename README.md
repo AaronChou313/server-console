@@ -60,7 +60,11 @@ HTTP 可以使用浏览器自带的粘贴事件与文件选择器。需要浏览
 
 在「配置」页可导入多个 Clash / Mihomo YAML 文件或订阅链接，编辑、导出、更新和切换配置。导入会先由 Mihomo 校验，可以在任意配置上点击「使用配置」。在「策略与节点」可切换规则、全局和直连模式，选择节点、恢复自动组，并执行单节点、组内或批量测速。「连接」页支持断开单条或全部连接，「路由规则」和「日志」可用于排查。每台设备独立保存配置，文件位于 Server Console 状态目录下的 `mihomo/`。
 
-Server Console 管理的 Mihomo 接受本机 `127.0.0.1:17890` 的 HTTP 和 SOCKS5 连接，管理接口使用私有 Unix socket。启动 Mihomo 后，需要代理的应用可单独配置该端口。初始配置为直连，导入自己的代理配置后即可选择节点。
+独立后台通过私有 Unix socket 接受管理命令，Server Console 网页服务停止时后台继续运行。
+
+- Linux 可在部署账户下执行 `./console install-mihomo-service`，安装并启用 `server-console-mihomo.service`。独立内核默认提供本机 `127.0.0.1:17890` 的 HTTP / SOCKS5 代理。
+- 从 Mac 上已有的 Open Remote Hub 代理迁移时，由当前管理员执行 `sudo /usr/bin/python3 -I "$PWD/scripts/migrate_mihomo_macos.py"`。该命令复制现有配置，保留原代理端口和 TUN 状态，并切换到独立的 `local.server-console.mihomo` 系统服务。新服务校验失败时会尝试恢复旧服务。
+- 无需启动网页，可以在部署账户下运行 `./console mihomo status`、`start`、`stop`、`restart`、`rules` 或 `logs`。
 
 ## 常驻服务
 

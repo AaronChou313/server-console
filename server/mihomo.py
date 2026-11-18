@@ -15,6 +15,7 @@ import yaml
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from . import mihomo_broker as broker
 from .runtime import ENV, STATE, binary, private_dir, read_json, replace, run
 
 router = APIRouter(prefix="/api/mihomo")
@@ -167,6 +168,8 @@ async def start():
 
 
 async def restore():
+    if broker.socket_path() or broker.migration_pending():
+        return
     if ENABLED.is_file() and executable():
         try:
             async with LOCK:
@@ -176,6 +179,8 @@ async def restore():
 
 
 async def control(method, path, **kwargs):
+    if broker.socket_path():
+        return await broker.request(method, path, **kwargs)
     if not running():
         raise HTTPException(409, "请先启动 Mihomo")
     try:
@@ -206,6 +211,19 @@ async def snapshot():
 
 @router.get("")
 async def status():
+    if broker.socket_path():
+        shared = {"owner": "service", "available": True, "groups": [], "engine_ready": False}
+        try:
+            state = await broker.state()
+            details = await snapshot() if state["ready"] else {}
+            return {**shared, **details, "service_online": True, "engine_ready": state["ready"],
+                    "state": "running" if state["ready"] and state["enabled"] else "error" if state["enabled"] else "stopped",
+                    "port": state["mixed_port"], "pid": state["pid"], "configured": state["configured"],
+                    "system_tun": state["tun"]}
+        except HTTPException as error:
+            return {**shared, "state": "error", "error": error.detail}
+    if broker.migration_pending():
+        return {"owner": "legacy", "available": False, "state": "migration", "groups": []}
     available = bool(executable())
     state = "running" if running() else "error" if ENABLED.exists() else "stopped"
     return {
@@ -217,6 +235,12 @@ async def status():
 
 @router.post("/start")
 async def enable():
+    if broker.socket_path():
+        async with LOCK:
+            await broker.change("enable")
+        return {"ok": True}
+    if broker.migration_pending():
+        raise HTTPException(409, "请先迁移 Mac 上已有的 Mihomo 服务")
     async with LOCK:
         await start()
         replace(ENABLED, "1\n")
@@ -225,6 +249,10 @@ async def enable():
 
 @router.post("/stop")
 async def disable():
+    if broker.socket_path():
+        async with LOCK:
+            await broker.change("disable")
+        return {"ok": True}
     async with LOCK:
         ENABLED.unlink(missing_ok=True)
         await stop()
@@ -292,12 +320,17 @@ async def download(url):
 
 
 async def checked(text, identity):
-    engine = require_engine()
     try:
         parsed = yaml.safe_load(text)
+        if broker.socket_path():
+            if not isinstance(parsed, dict):
+                raise ValueError("invalid profile")
+            await broker.request("POST", "/engine/validate", json={"source": parsed}, timeout=45)
+            return json.dumps(parsed, ensure_ascii=False)
         contents = normalize(parsed, identity)
     except (yaml.YAMLError, ValueError, TypeError, RecursionError) as error:
         raise HTTPException(422, "配置内容无效，请检查 YAML 格式") from error
+    engine = require_engine()
     private_dir(HOME)
     staged = HOME / "candidate.json"
     replace(staged, contents)
@@ -311,6 +344,9 @@ async def checked(text, identity):
 
 
 async def apply(contents):
+    if broker.socket_path():
+        await broker.change("apply", json.loads(contents))
+        return
     previous = CONFIG.read_text() if CONFIG.exists() else normalize({})
     live = running()
     if live:
@@ -427,9 +463,13 @@ async def delete_profile(identity: str):
         data = library()
         find(data, identity)
         if data["active"] == identity:
-            if running():
+            enabled = (await broker.state())["enabled"] if broker.socket_path() else running()
+            if enabled:
                 raise HTTPException(409, "请先切换配置或停止 Mihomo")
-            replace(CONFIG, normalize({}))
+            if broker.socket_path():
+                await apply("{}")
+            else:
+                replace(CONFIG, normalize({}))
             data["active"] = None
         del data["items"][identity]
         save_library(data)
@@ -438,6 +478,12 @@ async def delete_profile(identity: str):
 
 @router.post("/restart")
 async def restart():
+    if broker.socket_path():
+        async with LOCK:
+            await broker.change("restart")
+        return {"ok": True}
+    if broker.migration_pending():
+        raise HTTPException(409, "请先迁移 Mac 上已有的 Mihomo 服务")
     async with LOCK:
         await stop()
         await start()
@@ -449,8 +495,9 @@ async def restart():
 async def mode(form: Mode):
     async with LOCK:
         await control("PATCH", "/configs", json={"mode": form.mode})
-        current = read_json(CONFIG, {})
-        replace(CONFIG, json.dumps({**current, "mode": form.mode}, ensure_ascii=False))
+        if not broker.socket_path():
+            current = read_json(CONFIG, {})
+            replace(CONFIG, json.dumps({**current, "mode": form.mode}, ensure_ascii=False))
     return {"ok": True}
 
 
@@ -473,7 +520,7 @@ async def select(form: Choice):
 
 @router.post("/delay")
 async def delay(form: Delay):
-    if not running():
+    if not broker.socket_path() and not running():
         raise HTTPException(409, "请先启动 Mihomo")
     async with DELAY_SLOTS:
         try:
@@ -481,7 +528,7 @@ async def delay(form: Delay):
                                  params={"url":"https://www.gstatic.com/generate_204","timeout":4500}, timeout=6)
             return {"delay": data.get("delay")}
         except HTTPException as error:
-            if error.status_code == 502:
+            if error.status_code in (409, 502):
                 return {"delay": None}
             raise
 
@@ -509,6 +556,10 @@ async def check_provider(form: Delay):
 
 @router.post("/engine")
 async def install_engine():
+    if broker.socket_path():
+        raise HTTPException(409, "请在主机维护独立服务的 Mihomo 内核")
+    if broker.migration_pending():
+        raise HTTPException(409, "请先迁移 Mac 上已有的 Mihomo 服务")
     arch = {"x86_64": "amd64-v1", "amd64": "amd64-v1", "arm64": "arm64", "aarch64": "arm64"}.get(platform.machine().lower())
     system = platform.system().lower()
     if not arch or system not in ("linux", "darwin"):
@@ -600,6 +651,8 @@ async def close_connection(identity: uuid.UUID):
 
 @router.get("/logs")
 async def logs():
+    if broker.socket_path():
+        return await broker.request("GET", "/engine/logs")
     path = HOME / "mihomo.log"
     try:
         with path.open("rb") as log:
@@ -614,10 +667,14 @@ async def logs():
 async def check(target: str):
     if target not in CHECKS:
         raise HTTPException(404)
-    if not running():
+    if broker.socket_path():
+        proxy = f"http://127.0.0.1:{(await broker.state())['mixed_port']}"
+    elif running():
+        proxy = PROXY
+    else:
         raise HTTPException(409, "请先启动 Mihomo")
     try:
-        async with httpx.AsyncClient(proxy=PROXY, trust_env=False, timeout=10) as client:
+        async with httpx.AsyncClient(proxy=proxy, trust_env=False, timeout=10) as client:
             response = await client.get(CHECKS[target])
         return {"ok": response.is_success or response.status_code == 401, "status": response.status_code}
     except httpx.RequestError:
