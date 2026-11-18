@@ -363,4 +363,7 @@ td { font-family: var(--mono); }
 .proxy-node-label strong, .proxy-node-label small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proxy-node-label small { color: var(--muted); margin-top: 3px; }
 .proxy-latency { font-variant-numeric: tabular-nums; }
+.button.proxy-latency.latency-good { color: var(--success); background: var(--success-bg); }
+.button.proxy-latency.latency-warning { color: var(--warning); background: var(--warning-bg); }
+.button.proxy-latency.latency-bad { color: var(--danger); background: var(--danger-bg); }
 .proxy-log { padding: 6px 16px; }

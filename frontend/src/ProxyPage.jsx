@@ -158,7 +158,11 @@ function Nodes({data, busy, operate}) {
   }
 
   function value(node) {
-    return Object.hasOwn(latencies, node) ? latencies[node] : data.nodes?.[node]?.history[0]?.delay || undefined
+    if (Object.hasOwn(latencies, node)) return latencies[node]
+    const info = data.nodes?.[node]
+    const last = info?.history[0]
+    if (info?.alive === false || (last && last.delay <= 0)) return null
+    return last?.delay
   }
 
   async function check(target) {
@@ -193,13 +197,15 @@ function Nodes({data, busy, operate}) {
             <div className="proxy-nodes">{nodes.map(node => {
               const latency = value(node)
               const chosen = group.current === node
+              const latencyTone = latency === undefined ? '' : latency === null ? 'latency-bad'
+                : latency < 500 ? 'latency-good' : 'latency-warning'
               return <div className={'proxy-node' + (chosen ? ' chosen' : '')} key={node}>
                 <button className="proxy-node-label" title={node} aria-pressed={chosen}
                   disabled={!selectable.has(group.type) || !!busy || (chosen && (group.type === 'Selector' || group.fixed === node))}
                   onClick={() => operate('/selection', 'PUT', {group: group.name, node})}>
                   <strong>{node}</strong><small>{data.nodes?.[node]?.type || '代理组'}</small>
                 </button>
-                <Button className="proxy-latency" title={'测速 ' + node} aria-label={'测速 ' + node} disabled={!!job.current}
+                <Button className={'proxy-latency ' + latencyTone} title={'测速 ' + node} aria-label={'测速 ' + node} disabled={!!job.current}
                   onClick={() => test([node])}>{latency === undefined ? '测速' : latency === null ? '不可达' : latency + ' ms'}</Button>
               </div>
             })}</div>

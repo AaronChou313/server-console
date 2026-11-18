@@ -204,7 +204,8 @@ async def snapshot():
             "type": group["type"], "nodes": group["all"],
         } for name, group in nodes.items() if "all" in group
             and (name != "GLOBAL" or config.get("mode") == "global")],
-        "nodes": {name: {"type": info.get("type"), "history": (info.get("history") or [])[-1:]}
+        "nodes": {name: {"type": info.get("type"), "alive": info.get("alive"),
+                         "history": (info.get("history") or [])[-1:]}
                   for name, info in nodes.items() if "all" not in info},
     }
 
