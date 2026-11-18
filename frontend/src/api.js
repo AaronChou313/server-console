@@ -7,10 +7,10 @@ export async function api(path, {method = 'GET', body, signal} = {}) {
     body = JSON.stringify(body)
   }
   const res = await fetch('/api' + path, {method, body, headers, signal, cache: 'no-store'})
-  const value = await res.json()
+  const value = res.headers.get('content-type')?.includes('application/json') ? await res.json() : null
   if (!res.ok) {
     if (res.status === 401 && path !== '/login') window.dispatchEvent(new Event('console-logout'))
-    throw new Error(typeof value.detail === 'string' ? value.detail : '请求失败，请检查输入')
+    throw new Error(typeof value?.detail === 'string' ? value.detail : `请求失败（HTTP ${res.status}）`)
   }
   return value
 }

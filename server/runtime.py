@@ -16,12 +16,22 @@ HOME = Path.home()
 STATE = Path(os.getenv("SERVER_CONSOLE_STATE", str(HOME / ".config/server-console"))).expanduser()
 PATH = os.pathsep.join(dict.fromkeys([
     *filter(None, os.environ.get("PATH", "").split(os.pathsep)),
-    str(HOME / ".local/bin"), str(HOME / "bin"), "/opt/homebrew/bin", "/usr/local/bin",
+    str(HOME / ".local/share/server-console/node24/bin"), str(HOME / ".local/bin"), str(HOME / "bin"), "/opt/homebrew/bin", "/usr/local/bin",
     "/usr/bin", "/bin", "/usr/sbin", "/sbin",
 ]))
 ENV = {**os.environ, "PATH": PATH}
 ENV.pop("ZELLIJ", None)
 ENV.pop("ZELLIJ_SESSION_NAME", None)
+
+
+def ai_env():
+    proxy = os.getenv("SERVER_CONSOLE_TOOL_PROXY")
+    if not proxy:
+        return ENV
+    return {**ENV, "HTTP_PROXY": proxy, "HTTPS_PROXY": proxy,
+            "http_proxy": proxy, "https_proxy": proxy,
+            "NO_PROXY": "localhost,127.0.0.1,::1", "no_proxy": "localhost,127.0.0.1,::1",
+            "NODE_USE_ENV_PROXY": "1"}
 
 
 def private_dir(path):

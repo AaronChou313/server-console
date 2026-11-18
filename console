@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PATH="$PATH:$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.local/share/server-console/node24/bin:$PATH:$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export SERVER_CONSOLE_STATE="${SERVER_CONSOLE_STATE:-$HOME/.config/server-console}"
 label=local.server-console
 unit=server-console.service
@@ -10,7 +10,7 @@ case "$(uname -s)" in
   Linux) manager=systemd; service_file="$HOME/.config/systemd/user/$unit";;
   *) echo "Server Console 仅支持 macOS 和 Linux 服务端" >&2; exit 1;;
 esac
-bootstrap() {
+launch_agent() {
   local result attempt
   for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
     if result="$(launchctl bootstrap "$domain" "$service_file" 2>&1)"; then return; fi
@@ -23,8 +23,11 @@ python="$PWD/.venv/bin/python"
 command="${1:-help}"
 if [ "$#" -gt 0 ]; then shift; fi
 case "$command" in
+  bootstrap)
+    exec bash scripts/bootstrap.sh "$@"
+    ;;
   setup)
-    python3 -m venv .venv
+    if [ ! -x "$python" ]; then python3 -m venv .venv; fi
     "$python" -m pip install -r requirements.txt
     npm ci --prefix frontend
     npm run build --prefix frontend
@@ -35,6 +38,9 @@ case "$command" in
   mihomo)
     exec "$python" -m server.mihomo_ctl "$@"
     ;;
+  install-mihomo)
+    exec "$python" -m server.mihomo_setup --engine
+    ;;
   install-mihomo-service)
     exec "$python" -m server.mihomo_setup
     ;;
@@ -44,11 +50,15 @@ case "$command" in
     exec "$python" -m uvicorn server.main:app --host "$host" --port "$port" --ws-max-size 16777216 --timeout-graceful-shutdown 4 --no-access-log "$@"
     ;;
   install)
+    if [ "$manager" = systemd ] && ! systemctl --user show-environment >/dev/null 2>&1; then
+      echo "无法连接 systemd 用户服务。请通过 SSH 直接登录部署账户，或先使用 ./console run 前台运行。" >&2
+      exit 1
+    fi
     "$python" -m server.service "$manager" "$service_file" "$@"
     if [ "$manager" = launchd ]; then
       if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
       launchctl enable "$domain/$label"
-      bootstrap
+      launch_agent
     else
       systemctl --user daemon-reload
       systemctl --user enable "$unit"
@@ -59,14 +69,14 @@ case "$command" in
     if [ "$manager" = launchd ]; then
       case "$command" in
         start)
-          if ! launchctl print "$domain/$label" >/dev/null 2>&1; then bootstrap; fi
+          if ! launchctl print "$domain/$label" >/dev/null 2>&1; then launch_agent; fi
           ;;
         stop)
           if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
           ;;
         restart)
           if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
-          bootstrap
+          launch_agent
           ;;
         status) launchctl print "$domain/$label";;
       esac
@@ -83,6 +93,8 @@ case "$command" in
     ;;
   help|--help|-h)
     cat <<'HELP'
+./console bootstrap [--with-ai] [--with-mihomo]
+                                   准备运行环境和可选模块，再构建控制台
 ./console setup                    创建虚拟环境并构建前端
 ./console password                 设置或更改本地管理员密码
 ./console generate-password        生成首次登录密码并保存到私有目录
@@ -93,6 +105,7 @@ case "$command" in
                                    管理已安装的常驻服务
 ./console mihomo status|start|stop|restart|rules|logs
                                    直接管理独立 Mihomo 后台
+./console install-mihomo           下载安装官方 Mihomo 内核
 ./console install-mihomo-service    Linux 安装独立 Mihomo 用户服务
 HELP
     ;;

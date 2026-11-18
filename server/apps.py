@@ -26,7 +26,7 @@ scan_lock = asyncio.Lock()
 
 
 def loopback(address):
-    return address in LOOPBACK or address.startswith("127.")
+    return address in LOOPBACK or address == "localhost" or address.startswith("127.")
 
 
 def host(address):
@@ -95,8 +95,10 @@ def aggregate(rows):
 
 def probe_address(item):
     addresses = item["addresses"]
-    if any(address in WILDCARD or loopback(address) for address in addresses):
+    if "127.0.0.1" in addresses or addresses & {"0.0.0.0", "*", ""}:
         return "127.0.0.1"
+    if "::" in addresses:
+        return "::1"
     return sorted(addresses)[0]
 
 
@@ -143,7 +145,7 @@ async def scan(exclude):
         async with limit:
             try:
                 return await probe(client, item)
-            except Exception:
+            except (httpx.InvalidURL, UnicodeError, ValueError):
                 return None
 
     async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
@@ -154,7 +156,9 @@ async def scan(exclude):
 
 def direct_url(item, visible):
     port = item["port"]
-    if any(address in WILDCARD for address in item["addresses"]):
+    if visible in item["addresses"] and not loopback(visible):
+        return f"http://{host(visible)}:{port}/"
+    if not loopback(visible) and item["addresses"] & WILDCARD:
         return f"http://{host(visible)}:{port}/"
     for address in sorted(item["addresses"]):
         if not loopback(address) and address not in WILDCARD:
@@ -167,14 +171,14 @@ def local(item):
     return f"{host(address)}:{item['port']}"
 
 
-async def detect(exclude):
+async def detect(exclude, refresh=False):
     key = tuple(sorted(exclude))
     now = time.monotonic()
-    if cache["key"] == key and now - cache["at"] < CACHE_TTL:
+    if not refresh and cache["key"] == key and now - cache["at"] < CACHE_TTL:
         return cache["items"]
     async with scan_lock:
         now = time.monotonic()
-        if cache["key"] == key and now - cache["at"] < CACHE_TTL:
+        if not refresh and cache["key"] == key and now - cache["at"] < CACHE_TTL:
             return cache["items"]
         items = await scan(set(exclude))
         items.sort(key=lambda item: (direct_url(item, "") is None, (item["title"] or item["process"]).casefold()))
@@ -189,34 +193,26 @@ def excluded(request):
         ports.add(int(server[1]))
     if dsh.port:
         ports.add(int(dsh.port))
+    ports.update(tunnel["port"] for tunnel in tunnels.values())
     return frozenset(ports)
 
 
 @router.get("/api/apps")
-async def apps(request: Request):
-    items = await detect(excluded(request))
+async def apps(request: Request, refresh: bool = False):
+    items = await detect(excluded(request), refresh=refresh)
     visible = request.url.hostname or "127.0.0.1"
-    return {"apps": [{
-        "name": item["title"] or item["process"] or "Web 服务",
-        "process": item["process"], "pid": item["pid"], "port": item["port"],
-        "local": local(item), "addresses": sorted(item["addresses"]),
-        "server": item["server"], "url": direct_url(item, visible) or f"/apps/{item['port']}/",
-        "proxied": direct_url(item, visible) is None,
-    } for item in items]}
-
-
-def bind_address(server_ip):
-    if server_ip and not loopback(server_ip) and server_ip not in WILDCARD:
-        return server_ip
-    try:
-        addresses = [entry.address.split("%", 1)[0] for entries in psutil.net_if_addrs().values() for entry in entries
-                     if entry.family in (socket.AF_INET, socket.AF_INET6)]
-    except psutil.Error:
-        return None
-    usable = [value for value in addresses if not loopback(value) and value not in WILDCARD
-              and not value.startswith("169.254.") and not value.lower().startswith("fe80")]
-    tailnet = [value for value in usable if value.startswith("100.") or value.startswith("fd7a:115c:a1e0:")]
-    return (tailnet or usable or [None])[0]
+    bind = (request.scope.get("server") or ("127.0.0.1", 0))[0]
+    result = []
+    for item in items:
+        port = item["port"]
+        url = direct_url(item, visible)
+        result.append({
+            "name": item["title"] or item["process"] or "Web 服务", "port": port,
+            "local": local(item), "upstream": f"{host(probe_address(item))}:{port}",
+            "url": url or f"/apps/{port}/", "proxied": url is None,
+            "local_only": url is None and (loopback(bind) or bind in WILDCARD),
+        })
+    return {"apps": result}
 
 
 async def copy(reader, writer):
@@ -252,7 +248,7 @@ async def sweep(port):
             return
 
 
-async def forward(port, bind):
+async def forward(port, bind, upstream):
     existing = tunnels.get(port)
     if existing and existing["bind"] == bind:
         existing["last"] = time.monotonic()
@@ -267,7 +263,7 @@ async def forward(port, bind):
         try:
             try:
                 upstream_reader, upstream_writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", port), 3)
+                    asyncio.open_connection(upstream, port), 3)
             except (OSError, asyncio.TimeoutError):
                 return
             await asyncio.gather(copy(reader, upstream_writer), copy(upstream_reader, writer))
@@ -295,11 +291,11 @@ async def open_app(port: int, request: Request):
     if direct_url(item, visible):
         raise HTTPException(409, "该服务可以直接访问")
     server = request.scope.get("server") or ("", 0)
-    bind = bind_address(server[0])
-    if not bind:
-        raise HTTPException(503, "控制台只监听回环地址，无法建立远程转发")
-    tunnel = await forward(port, bind)
-    return RedirectResponse(f"http://{host(bind if bind != server[0] else visible)}:{tunnel['port']}/",
+    bind = server[0]
+    if not bind or bind in WILDCARD or (loopback(bind) and not loopback(visible)):
+        raise HTTPException(409, "请通过本机浏览器访问，或为此应用单独建立 SSH 端口转发")
+    tunnel = await forward(port, bind, probe_address(item))
+    return RedirectResponse(f"http://{host(bind)}:{tunnel['port']}/",
                             status_code=302, headers={"Cache-Control": "no-store"})
 
 

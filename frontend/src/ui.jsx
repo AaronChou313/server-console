@@ -1,4 +1,4 @@
-import React, {useEffect, useRef} from 'react'
+import React, {useEffect, useId, useRef} from 'react'
 import {AlertCircle, LoaderCircle, X} from 'lucide-react'
 
 export function Button({icon: Icon, variant = '', className = '', children, ...props}) {
@@ -32,13 +32,14 @@ export function Empty({icon: Icon, title, children}) {
 
 export function Modal({title, onClose, children}) {
   const ref = useRef(null)
+  const titleId = useId()
   useEffect(() => {
     const el = ref.current
     el.showModal()
     return () => el.close()
   }, [])
-  return <dialog ref={ref} className="modal" onCancel={event => {event.preventDefault(); onClose()}}>
-    <header><h2>{title}</h2><Button icon={X} aria-label="关闭" onClick={onClose}/></header>
+  return <dialog ref={ref} className="modal" aria-labelledby={titleId} onCancel={event => {event.preventDefault(); onClose()}}>
+    <header><h2 id={titleId}>{title}</h2><Button icon={X} aria-label="关闭" onClick={onClose}/></header>
     <div className="modal-content">{children}</div>
   </dialog>
 }

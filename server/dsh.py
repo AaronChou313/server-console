@@ -4,16 +4,18 @@ import os
 import re
 import signal
 import socket
+from contextlib import suppress
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request, WebSocket
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from starlette.background import BackgroundTask
-from starlette.responses import StreamingResponse
+from starlette.requests import ClientDisconnect
+from starlette.responses import Response, StreamingResponse
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
-from .runtime import ENV, HOME, require
+from .runtime import HOME, ai_env, require
 
 router = APIRouter()
 lock = asyncio.Lock()
@@ -77,7 +79,7 @@ async def start(request: Request):
                 require("dsh"), "web", "--host", "127.0.0.1", "--port", str(port),
                 "--no-open", "--public-url", origin + "/dsh/", "--trusted-host", urlsplit(origin).netloc,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                cwd=HOME, env=ENV, start_new_session=True,
+                cwd=HOME, env=ai_env(), start_new_session=True,
             )
             reader = asyncio.create_task(stdout())
         for _ in range(100):
@@ -122,13 +124,20 @@ async def proxy(request: Request, path: str):
         b"?" + request.scope["query_string"] if request.scope["query_string"] else b""
     ))
     client = httpx.AsyncClient(timeout=httpx.Timeout(10, read=None), trust_env=False)
+    content = request.stream() if request.method not in ("GET", "HEAD") else None
     try:
         upstream = await client.send(client.build_request(
-            request.method, url, headers=upstream_headers(request), content=request.stream(),
+            request.method, url, headers=upstream_headers(request), content=content,
         ), stream=True)
+    except ClientDisconnect:
+        await client.aclose()
+        return Response(status_code=499)
     except httpx.HTTPError:
         await client.aclose()
         raise HTTPException(502, "无法连接 DSH Web") from None
+    except asyncio.CancelledError:
+        await client.aclose()
+        raise
 
     async def release():
         await upstream.aclose()
@@ -184,7 +193,5 @@ async def ws_proxy(ws: WebSocket, path: str):
                 await asyncio.gather(*tasks, return_exceptions=True)
     except (OSError, WebSocketException) as error:
         logging.getLogger(__name__).warning("DSH WebSocket: %s", error)
-    try:
+    with suppress(RuntimeError, WebSocketDisconnect):
         await ws.close()
-    except RuntimeError:
-        pass

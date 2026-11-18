@@ -13,7 +13,7 @@ function ProfileEditor({item, close, saved}) {
   const [name, setName] = useState(item?.name || '')
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
-  const [kind, setKind] = useState('yaml')
+  const [kind, setKind] = useState(item ? 'yaml' : 'url')
   const [ready, setReady] = useState(!item)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -40,7 +40,7 @@ function ProfileEditor({item, close, saved}) {
     event.preventDefault()
     setBusy(true)
     setError('')
-    const body = item ? {name, text, ...(url ? {url} : {})} : {name, ...(kind === 'url' ? {url} : {text})}
+    const body = {name, ...(kind === 'url' ? {url: url.trim()} : {text})}
     try {
       await api('/mihomo' + (item ? profilePath(item.id) : '/profiles'), {method: item ? 'PUT' : 'POST', body})
       saved()
@@ -51,22 +51,27 @@ function ProfileEditor({item, close, saved}) {
   return <Modal title={item ? '编辑 Mihomo 配置' : '导入 Mihomo 配置'} onClose={() => {if (!busy) close()}}>
     <form className="form" onSubmit={submit}>
       <label>配置名称<input value={name} onChange={e => setName(e.target.value)} maxLength={120} required autoFocus disabled={busy}/></label>
-      {!item && <label>导入方式<select value={kind} onChange={e => setKind(e.target.value)} disabled={busy}>
-        <option value="yaml">YAML 文件或文本</option><option value="url">订阅链接</option>
-      </select></label>}
-      {(kind === 'url' || item) && <label>{item ? '替换订阅地址（可选）' : '订阅地址'}
-        <input type="password" autoComplete="off" spellCheck={false} placeholder="https://…" value={url}
-          required={!item && kind === 'url'} onChange={e => setUrl(e.target.value)} disabled={busy}/>
-      </label>}
-      {!item && kind === 'url' && <p className="form-note">Base64 节点列表会自动转换为 Clash 配置；直连失败时会尝试本机 Mihomo 代理。仍无法下载时，可在能访问订阅的设备上打开链接，把 YAML 粘贴到「YAML 文件或文本」导入。</p>}
-      {(kind === 'yaml' || item) && <>
-        <label>{item ? '替换配置文件' : '配置文件'}<input type="file" accept=".yaml,.yml,.json" onChange={load} disabled={busy}/></label>
-        <label>配置内容<textarea placeholder="粘贴 Clash / Mihomo YAML" rows={10} value={text} onChange={e => setText(e.target.value)} disabled={!ready || busy} required/></label>
+      <div className="segments import-method" role="group" aria-label="配置来源">
+        <button type="button" aria-pressed={kind === 'url'} className={kind === 'url' ? 'selected' : ''}
+          onClick={() => setKind('url')} disabled={busy}>{item?.subscription ? '替换订阅' : '订阅链接'}</button>
+        <button type="button" aria-pressed={kind === 'yaml'} className={kind === 'yaml' ? 'selected' : ''}
+          onClick={() => setKind('yaml')} disabled={busy}>配置文件或文本</button>
+      </div>
+      {kind === 'url' ? <>
+        <label>{item?.subscription ? '新订阅地址' : '订阅地址'}
+          <input type="password" inputMode="url" autoComplete="off" spellCheck={false} placeholder="https://…" value={url}
+            required onChange={e => setUrl(e.target.value)} disabled={busy}/>
+        </label>
+        <p className="form-note">优先使用服务商提供的 Clash / Mihomo 订阅链接。服务器无法下载时，可以换用配置文件或粘贴文本。</p>
+      </> : <>
+        <label>{item ? '替换配置文件' : '配置文件'}<input type="file" accept=".yaml,.yml,.json,.txt" onChange={load} disabled={busy}/></label>
+        <label>配置内容<textarea placeholder="粘贴 Clash / Mihomo YAML 或节点链接" rows={9} value={text}
+          onChange={e => setText(e.target.value)} disabled={!ready || busy} required/></label>
       </>}
-      {item?.active && <p>修改 YAML 会重新加载正在使用的配置。</p>}
+      {item?.active && <p className="form-note">保存前会校验新配置。配置内容变化后会重新加载代理。</p>}
       <ErrorNotice>{error}</ErrorNotice>
       <div className="form-actions"><Button onClick={close} disabled={busy}>取消</Button>
-        <button className="button primary" disabled={!ready || busy}>{busy ? '正在校验…' : '保存配置'}</button></div>
+        <button className="button primary" disabled={!ready || busy}>{busy ? (kind === 'url' ? '正在下载和校验…' : '正在校验…') : item ? '保存修改' : '导入'}</button></div>
     </form>
   </Modal>
 }
@@ -81,10 +86,10 @@ function Profiles({items, running, busy, add, edit, operate, confirm}) {
       <div className="entry-text"><strong>{item.name}</strong><small>{item.subscription ? '订阅' : '本地配置'} · {date(item.updated)}</small>
         {item.usage?.total > 0 && <small>已用 {bytes((item.usage.upload || 0) + (item.usage.download || 0))} / {bytes(item.usage.total)}
           {item.usage.expire > 0 && ' · 到期 ' + date(item.usage.expire)}</small>}</div>
-      {item.active && <Badge tone="good">当前配置</Badge>}
+      {item.active && <Badge tone={running ? 'good' : 'neutral'}>{running ? '正在使用' : '已选中'}</Badge>}
       <div className="row-actions">
-        <Button variant="primary" disabled={item.active || !!busy} onClick={() => operate(profilePath(item.id) + '/activate')}>使用配置</Button>
-        {item.subscription && <Button disabled={!!busy} onClick={() => operate(profilePath(item.id) + '/refresh')}>更新订阅</Button>}
+        <Button variant="primary" disabled={item.active || !!busy} onClick={() => operate(profilePath(item.id) + '/activate')}>{busy === profilePath(item.id) + '/activate' ? '正在应用…' : '使用配置'}</Button>
+        {item.subscription && <Button disabled={!!busy} onClick={() => operate(profilePath(item.id) + '/refresh')}>{busy === profilePath(item.id) + '/refresh' ? '正在更新…' : '更新订阅'}</Button>}
         <Button disabled={!!busy} onClick={() => edit(item)}>编辑</Button>
         <a className="button icon-button" aria-label={'导出 ' + item.name} title="导出 YAML" href={'/api/mihomo' + profilePath(item.id) + '/download'} download><Download size={16}/></a>
         <Button variant="danger" disabled={!!busy || (item.active && running)}
@@ -300,6 +305,9 @@ export default function ProxyPage() {
     setMessage('')
     try {
       const result = await api('/mihomo' + path, {method, body})
+      if (path.endsWith('/refresh')) setMessage('订阅已更新')
+      if (path.endsWith('/activate')) setMessage(running ? '配置已切换' : '配置已选中，启动 Mihomo 后生效')
+      if (path === '/start') setMessage('Mihomo 已启动')
       if (path === '/engine') setMessage(result.updated ? '已安装 Mihomo ' + result.version : 'Mihomo 已是最新版本 ' + result.version)
       if (!path.startsWith('/check/') && !path.startsWith('/connections')) refresh()
       return result
@@ -315,7 +323,7 @@ export default function ProxyPage() {
   return <div className="page">
     <PageTitle title="网络代理"><Button icon={RefreshCw} onClick={refresh}>刷新</Button></PageTitle>
     <ErrorNotice>{error || profiles.error || data?.error || (!pending && problem)}</ErrorNotice>
-    {message && <p role="status">{message}</p>}
+    {message && <div className="notice success" role="status">{message}</div>}
     {!data && !error && <Loading/>}
     {data && <section className="card">
       <CardTitle icon={Cable} title="Mihomo"><Badge tone={running ? 'good' : data.state === 'error' ? 'bad' : 'neutral'}>
@@ -350,7 +358,11 @@ export default function ProxyPage() {
         : engineReady ? <Nodes key={active?.updated || 'default'} data={data} busy={busy} operate={operate}/>
         : <section className="card"><Empty title="启动 Mihomo 后可使用此功能"/></section>}
     </>}
-    {editing && <ProfileEditor item={editing.id ? editing : null} close={() => setEditing(null)} saved={() => {setEditing(null); refresh()}}/>}
+    {editing && <ProfileEditor item={editing.id ? editing : null} close={() => setEditing(null)} saved={() => {
+      setMessage(editing.id ? '配置已保存' : '已导入到配置库，点击「使用配置」即可切换')
+      setEditing(null)
+      refresh()
+    }}/>}
     {pending && <Modal title={pending.title} onClose={() => {if (!busy) setPending(null)}}>
       <p>{pending.description}</p><ErrorNotice>{problem}</ErrorNotice>
       <div className="form-actions"><Button onClick={() => setPending(null)} disabled={!!busy}>取消</Button>

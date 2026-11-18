@@ -1,4 +1,5 @@
 """Install a user-run, independent Mihomo service on Linux."""
+import asyncio
 import json
 import os
 import shutil
@@ -8,6 +9,7 @@ import time
 
 import httpx
 import yaml
+from fastapi import HTTPException
 
 from . import mihomo
 from .runtime import HOME, ROOT, STATE, private_dir, read_json, replace
@@ -19,8 +21,20 @@ def systemctl(*args, check=True):
 
 
 def main():
+    if sys.argv[1:] == ["--engine"]:
+        if mihomo.executable() or mihomo.broker.socket_path():
+            print("已发现 Mihomo，沿用现有内核。")
+            return
+        try:
+            result = asyncio.run(mihomo.install_engine())
+        except HTTPException as error:
+            sys.exit(error.detail)
+        print("已安装 Mihomo " + result["version"])
+        return
     if not sys.platform.startswith("linux"):
         sys.exit("macOS 的系统 TUN 请使用 migrate_mihomo_macos.py")
+    if systemctl("show-environment", check=False).returncode:
+        sys.exit("无法连接 systemd 用户服务。请通过 SSH 直接登录部署账户，或先省略 --with-mihomo 并在前台使用控制台。")
     service = "server-console-mihomo.service"
     console = "server-console.service"
     unit = HOME / ".config/systemd/user" / service
@@ -36,7 +50,7 @@ def main():
     current = read_json(mihomo.CONFIG, {})
     library = mihomo.library()
     active = library["items"].get(library["active"])
-    source = yaml.safe_load(active["source"]) if active else {key: current[key] for key in mihomo.PROFILE_KEYS if key in current}
+    source = yaml.safe_load(mihomo.profile_text(active["source"])) if active else {key: current[key] for key in mihomo.PROFILE_KEYS if key in current}
     enabled = mihomo.ENABLED.exists()
     replace(runtime / "state.json", json.dumps({
         "source": source, "enabled": enabled, "mode": current.get("mode", source.get("mode", "rule")),

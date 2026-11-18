@@ -179,7 +179,10 @@ class Engine:
             result=subprocess.run([str(self.binary),'-t','-d',str(self.home),'-f',str(self.home/'candidate.json')],
                                   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=35)
             if result.returncode: raise ValueError('Mihomo 配置检查失败，原配置保持不变。请检查 YAML、节点协议或规则依赖')
-        finally: (self.home/'candidate.json').unlink(missing_ok=True)
+        except subprocess.TimeoutExpired:
+            raise ValueError('Mihomo 校验超时，请检查 GeoIP 数据和远程规则的下载地址') from None
+        finally:
+            (self.home/'candidate.json').unlink(missing_ok=True)
         return {'ok':True}
 
     def change(self, body):
@@ -277,8 +280,12 @@ class Handler(BaseHTTPRequestHandler):
                 elif self.path=='/engine/control' and self.command=='POST': result=engine.change(body or {})
                 elif self.path=='/engine/validate' and self.command=='POST': result=engine.validate((body or {}).get('source'))
                 elif self.path=='/engine/logs' and self.command=='GET':
-                    with (engine.home/'engine.log').open('rb') as f:
-                        f.seek(max(0,os.fstat(f.fileno()).st_size-32768)); value=f.read().decode(errors='replace')
+                    try:
+                        with (engine.home / 'engine.log').open('rb') as log:
+                            log.seek(max(0, os.fstat(log.fileno()).st_size - 32768))
+                            value = log.read().decode(errors='replace')
+                    except FileNotFoundError:
+                        value = ''
                     # Do not publish URLs (may include subscription tokens) or UUIDs.
                     value=re.sub(r'https?://[^\s"\x1b]+','[URL]',value)
                     value=re.sub(r'\b[\da-fA-F]{8}(?:-[\da-fA-F]{4}){3}-[\da-fA-F]{12}\b','[credential]',value)
@@ -295,12 +302,9 @@ class Handler(BaseHTTPRequestHandler):
                     result=engine.core(self.command,self.path)
                 elif self.command=='DELETE' and (re.fullmatch(r'/connections(?:/[A-Za-z0-9-]+)?',self.path) or re.fullmatch(r'/proxies/[^/]+',self.path)): result=engine.core('DELETE',self.path)
                 else: raise ValueError('此接口未开放')
-        except (ValueError, OSError, subprocess.SubprocessError):
-            status=409
-            # Known failures are actionable but never include source configs/URLs.
-            import sys
-            err=sys.exc_info()[1]
-            result={'detail':str(err) if isinstance(err,ValueError) else '内核不可用，请查看日志后重试'}
+        except (ValueError, OSError, subprocess.SubprocessError) as error:
+            status = 409
+            result = {'detail': str(error) if isinstance(error, ValueError) else '内核不可用，请查看日志后重试'}
         raw=json.dumps(result,ensure_ascii=False).encode()
         self.send_response(status); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
 

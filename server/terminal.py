@@ -15,7 +15,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from .runtime import ENV, STATE, directory, private_dir, read_json, replace, require, run
+from .runtime import ENV, STATE, ai_env, directory, private_dir, read_json, replace, require, run
 
 router = APIRouter()
 MANAGED = re.compile(r"sc-[a-f0-9]{12}")
@@ -77,7 +77,7 @@ async def create_session(kind, cwd, name, command):
             try:
                 launcher = await asyncio.create_subprocess_exec(
                     *zellij(), "attach", "--create-background", session, "--", *command,
-                    cwd=cwd, env=ENV, stdin=asyncio.subprocess.DEVNULL, stdout=output, stderr=output,
+                    cwd=cwd, env=ai_env() if kind == "codex" else ENV, stdin=asyncio.subprocess.DEVNULL, stdout=output, stderr=output,
                 )
             except OSError as error:
                 raise HTTPException(502, "无法启动 Zellij") from error

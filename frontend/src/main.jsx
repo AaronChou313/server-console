@@ -63,13 +63,15 @@ function SettingsPage({theme, setTheme, font, setFont, fontFamily, setFontFamily
       <div className="settings-row"><div><strong>字体</strong><p>使用浏览器设备上可用的等宽字体。</p></div>
         <select aria-label="终端字体" value={fontFamily} onChange={e => setFontFamily(e.target.value)}><option value="system">系统等宽</option><option value="classic">Consolas</option><option value="courier">Courier New</option></select>
       </div>
-      <div className="settings-row"><div><strong>字号</strong><p>适用于 Web 终端、Codex 和 DSH CLI。</p></div>
+      <div className="settings-row"><div><strong>字号</strong><p>适用于 Web 终端和 Codex。</p></div>
         <select aria-label="终端字号" value={font} onChange={e => setFont(Number(e.target.value))}>{[11,12,13,14,15,16,17,18,19,20,22,24].map(n => <option key={n} value={n}>{n} px</option>)}</select>
       </div>
       <div className="font-preview" style={{fontFamily: fonts[fontFamily], fontSize: font}}><span>❯</span> server-console<br/>Aa Bb Cc 01 23 45</div>
     </section>
     <section className="card settings-card">
       <CardTitle icon={Server} title="主机工具"/>
+      {!tools && <Loading>正在检测主机工具…</Loading>}
+      <p className="section-note">需要 Codex 或 DeepSeek Harness 时，在服务器仓库中运行 <code>./console bootstrap --with-ai</code>。Tailscale 为可选项。</p>
       {Object.entries(tools || {}).map(([name, installed]) => <div className="settings-row" key={name}><strong className="mono">{name}</strong><Badge tone={installed ? 'good' : 'warning'}>{installed ? '已检测到' : '未安装'}</Badge></div>)}
     </section>
   </div>
@@ -86,7 +88,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
   const [active, setActive] = useState(() => readValue('console-active', ''))
   const [font, setFont] = useState(() => readValue('console-font', 14))
   const [fontFamily, setFontFamily] = useState(() => readValue('console-font-family', 'system'))
-  const overview = useResource('/overview', 3000)
+  const overview = useResource('/overview', page === 'overview' ? 3000 : 10000)
   const tools = useResource('/tools', 30000)
   useEffect(() => {
     function route() {
@@ -159,7 +161,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
       {page === 'apps' && <AppsPage/>}
       {isTerminal(page) && <Suspense fallback={<Loading/>}><TerminalPage key={page} kind={page === 'terminal' ? 'shell' : page} font={font} family={terminalFamily(fontFamily)}
         hidden={hidden} setHidden={setHidden} tabs={tabs} setTabs={setTabs} active={active} select={setActive} tools={tools.data}/></Suspense>}
-      {page === 'dsh' && <DshPage/>}
+      {page === 'dsh' && <DshPage installed={tools.data?.dsh}/>}
       {page === 'docker' && <DockerPage openTerminal={openTerminal}/>}
       {page === 'ssh' && <SSHPage openTerminal={openTerminal}/>}
       {page === 'network' && <NetworkPage/>}
