@@ -35,7 +35,7 @@ HTTP 可以使用浏览器自带的粘贴事件与文件选择器。需要浏览
 | Docker | 查看 Engine 状态、容器、CPU 和内存，启动、停止、重启、查看末尾日志或进入容器。容器中需要可用的 `/bin/bash` 或 `/bin/sh`。 |
 | SSH | 系统 OpenSSH 发起连接。主配置的独立 `Host` 条目可编辑，`Include` 或多别名配置可以查看和连接。保存前在 `~/.ssh/config.server-console.bak` 留一份备份。认证使用现有密钥和系统代理。 |
 | 网络 | 查看网络接口、当前用户权限下可读取的连接、Tailscale Peer 和链路信息。支持 Ping、TCP、Tailscale Ping 和 Netcheck。 |
-| 网络代理 | 管理本机 Mihomo，导入 Clash / Mihomo 配置，切换代理组中的节点，并检测 OpenAI 和 DeepSeek API 的连通性。 |
+| 网络代理 | 管理本机 Mihomo 内核、配置和订阅，切换策略组节点、测试延迟，查看规则、连接和日志。 |
 | AI 工作台 | 在终端使用原生 Codex CLI，在 DeepSeek Harness 页面使用官方 Web 界面。 |
 | 设置 | 在当前浏览器保存亮暗主题、终端字体与字号。 |
 
@@ -56,7 +56,9 @@ HTTP 可以使用浏览器自带的粘贴事件与文件选择器。需要浏览
 
 ### Mihomo
 
-在目标设备安装 [官方 Mihomo 可执行文件](https://github.com/MetaCubeX/mihomo/releases)，放到服务的 PATH，或通过 `SERVER_CONSOLE_MIHOMO` 指定可执行文件。打开「网络代理」导入标准 Clash / Mihomo YAML（可上传文件或粘贴内容）并启动。每台设备独立保存配置和节点选择，文件位于 Server Console 状态目录下的 `mihomo/`。
+打开「网络代理」可安装、更新、启动、停止和重启 Mihomo。也支持服务 PATH 中的 [官方 Mihomo 可执行文件](https://github.com/MetaCubeX/mihomo/releases)，可用 `SERVER_CONSOLE_MIHOMO` 指定路径。内核下载安装需要服务器能够访问 GitHub。
+
+在「配置」页可导入多个 Clash / Mihomo YAML 文件或订阅链接，编辑、导出、更新和切换配置。导入会先由 Mihomo 校验，可以在任意配置上点击「使用配置」。在「策略与节点」可切换规则、全局和直连模式，选择节点、恢复自动组，并执行单节点、组内或批量测速。「连接」页支持断开单条或全部连接，「路由规则」和「日志」可用于排查。每台设备独立保存配置，文件位于 Server Console 状态目录下的 `mihomo/`。
 
 Server Console 管理的 Mihomo 接受本机 `127.0.0.1:17890` 的 HTTP 和 SOCKS5 连接，管理接口使用私有 Unix socket。启动 Mihomo 后，需要代理的应用可单独配置该端口。初始配置为直连，导入自己的代理配置后即可选择节点。
 

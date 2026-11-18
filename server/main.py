@@ -116,7 +116,8 @@ def logout(request: Request):
 
 @app.get("/api/tools")
 def tools():
-    return {name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale", "mihomo")}
+    return {**{name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale")},
+            "mihomo": bool(mihomo.executable())}
 
 
 @app.post("/api/uploads")
