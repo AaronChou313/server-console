@@ -12,12 +12,27 @@ import yaml
 from fastapi import HTTPException
 
 from . import mihomo
+from .mihomo_geo import ASSETS, MMDB_ALIASES
 from .runtime import HOME, ROOT, STATE, private_dir, read_json, replace
 from .service import systemd_quote
 
 
 def systemctl(*args, check=True):
     return subprocess.run(["systemctl", "--user", *args], check=check, capture_output=True)
+
+
+def wait_for_broker(socket_path, enabled):
+    deadline = time.monotonic() + 15
+    with httpx.Client(transport=httpx.HTTPTransport(uds=socket_path), timeout=2, trust_env=False) as client:
+        while time.monotonic() < deadline:
+            try:
+                state = client.get("http://localhost/engine/state").raise_for_status().json()
+                if state["enabled"] == enabled and state["ready"] == enabled:
+                    return
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.25)
+    raise RuntimeError("独立 Mihomo 服务启动超时")
 
 
 def main():
@@ -38,7 +53,25 @@ def main():
     service = "server-console-mihomo.service"
     console = "server-console.service"
     unit = HOME / ".config/systemd/user" / service
+    socket_path = f"{os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}/server-console-mihomo.sock"
     if unit.exists():
+        # 更新控制台代码后，服务里那份 daemon.py 也要跟着刷新，否则改动不生效。
+        runtime = private_dir(STATE / "mihomo-service")
+        daemon = runtime / "daemon.py"
+        source = (ROOT / "scripts/mihomo_daemon.py").read_text()
+        if not daemon.exists() or daemon.read_text() != source:
+            previous = daemon.read_text() if daemon.exists() else None
+            replace(daemon, source, mode=0o700)
+            try:
+                systemctl("restart", service)
+                wait_for_broker(socket_path, read_json(runtime / "state.json", {}).get("enabled", False))
+            except (RuntimeError, subprocess.CalledProcessError):
+                if previous is not None:
+                    replace(daemon, previous, mode=0o700)
+                    systemctl("restart", service, check=False)
+                sys.exit("Mihomo 独立服务更新失败，请查看 journalctl --user -u " + service)
+            print("已更新 Mihomo 独立服务的守护脚本并重启。")
+            return
         systemctl("enable", "--now", service)
         print("Mihomo 独立服务已安装。")
         return
@@ -58,9 +91,11 @@ def main():
     path = mihomo.broker.socket_path()
     if path is not None:
         sys.exit("已发现其他独立 Mihomo 服务，请先检查配置")
-    socket_path = f"{os.getenv('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')}/server-console-mihomo.sock"
     argv = ["/usr/bin/python3", "-I", str(daemon), "--home", str(runtime), "--binary",
             binary, "--socket", socket_path, "--uid", str(os.getuid())]
+    for name in (*ASSETS.values(), *MMDB_ALIASES):
+        if (mihomo.HOME / name).is_file() and not (runtime / name).exists():
+            shutil.copy2(mihomo.HOME / name, runtime / name)
     subprocess.run([*argv, "--validate-only"], check=True)
     console_was_running = systemctl("is-active", console, check=False).returncode == 0
     if console_was_running:
@@ -83,18 +118,7 @@ WantedBy=default.target
 """)
         systemctl("daemon-reload")
         systemctl("enable", "--now", service)
-        deadline = time.monotonic() + 15
-        with httpx.Client(transport=httpx.HTTPTransport(uds=socket_path), timeout=2) as client:
-            while time.monotonic() < deadline:
-                try:
-                    state = client.get("http://localhost/engine/state").raise_for_status().json()
-                    if state["enabled"] == enabled and state["ready"] == enabled:
-                        break
-                except httpx.HTTPError:
-                    pass
-                time.sleep(0.25)
-            else:
-                raise RuntimeError("独立 Mihomo 服务启动超时")
+        wait_for_broker(socket_path, enabled)
     except Exception:
         systemctl("disable", "--now", service, check=False)
         unit.unlink(missing_ok=True)

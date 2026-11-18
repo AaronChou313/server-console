@@ -224,10 +224,20 @@ sudo loginctl enable-linger "$USER"
 
 ### 5. 离线或受限网络
 
-- **GitHub 不可达**：用上面的 tar / git bundle 方式传输代码。
-- **Node.js / Zellij 下载失败**：在能联网的机器上按 `bootstrap` 使用的地址取对应文件；Node 解压时去掉顶层目录（`tar -xzf node.tar.gz -C ~/.local/share/server-console/node24 --strip-components=1`），Zellij 放到 `~/.local/bin/zellij`，再执行 `./console setup`。
-- **PyPI / npm 慢**：配置可达的镜像后执行 `./console setup`；`bootstrap` 只准备运行时，不会修改全局镜像配置。
-- **Mihomo 内核**：`./console install-mihomo` 需要访问 GitHub；也可以先在别处下载官方可执行文件，再用 `SERVER_CONSOLE_MIHOMO` 指向它。
+默认使用上游下载源。服务器无法访问其中某一项时，可按需指定自己能访问的镜像或代理。不要把这些变量写入全局 npm 或 pip 配置。
+
+| 变量 | 作用 | 默认值 |
+| --- | --- | --- |
+| `SERVER_CONSOLE_GITHUB_MIRROR` | GitHub URL 前缀，用于 Zellij、Mihomo 发行版和 uv 下载 | 直连 |
+| `SERVER_CONSOLE_NODE_MIRROR` | 提供 `latest-v24.x` 的 Node.js 发行版根地址 | `https://nodejs.org/dist` |
+| `SERVER_CONSOLE_UV_BASE` | 提供 `install.sh` 的 uv 安装器地址 | `https://astral.sh/uv` |
+| `SERVER_CONSOLE_NPM_REGISTRY` | 前端依赖和 AI 工具的 npm registry | npm 自身配置 |
+| `SERVER_CONSOLE_GEO_MIRROR` | Mihomo Geo 数据根地址，仅补齐缺失的文件 | MetaCubeX GitHub release，失败后尝试项目列出的 jsDelivr |
+| `PIP_INDEX_URL` | PyPI 索引地址 | pip 自身配置 |
+
+可以先装基础控制台，再按需添加 AI 和代理。若 GitHub Release 不通，可从另一台机器下载对应架构的运行时再上传。Node 解压到 `~/.local/share/server-console/node24` 时去掉压缩包顶层目录，Zellij 放到 `~/.local/bin/zellij`，Mihomo 可用 `SERVER_CONSOLE_MIHOMO=<绝对路径> ./console install-mihomo` 指向已有二进制。完全离线时还需要准备同架构的 Python 依赖、构建好的 `frontend/dist` 和所需工具。仅传代码无法完成离线部署。
+
+Geo 数据镜像如需在常驻 Web 服务中生效，使用 `SERVER_CONSOLE_GEO_MIRROR=<地址> ./console install`，沿用原来的 `--host` 和 `--port` 参数。订阅如果提供了自定义 `geox-url`，优先使用其指定地址。
 
 ### 6. 更新
 
@@ -290,7 +300,12 @@ codex login --device-auth
 - 如果账号未启用设备码认证，可用 `codex login --with-api-key` 从标准输入提供 API Key。
 - 需要代理时，在终端里显式设置 `HTTPS_PROXY` / `HTTP_PROXY`，或使用下面的 `SERVER_CONSOLE_TOOL_PROXY`。
 
-DSH 使用「DeepSeek Harness」页面提供的官方 Web 界面。首次使用在自己的 DSH 设置里配置 DeepSeek 提供方和 API Key。若账号登录使用回环回调、远程浏览器无法完成回调，可改用 DSH 设置里的 API Key/提供方配置，或先在能访问回调的本机完成登录。
+DSH 使用「DeepSeek Harness」提供的官方 Web 界面。首次使用可选以下方式。
+
+1. **API Key**。进入 DSH 的「设置 → 模型」，选择 DeepSeek 提供方，保存自己的 API Key。DSH 进程需要能访问该提供方的端点。
+2. **DeepSeek 账号**。在「登录与配置」中点击「准备账号登录」。按提示在打开浏览器的电脑上运行 SSH 转发命令，使用自己平时能登录服务器的 SSH 用户、IP、别名或跳板参数，然后打开临时回环地址。即使控制台本身经 SSH 转发到 localhost，也要使用这条单独的登录转发，因为 OAuth 回调必须到达 DSH 的原生端口。登录完成后点「刷新 DSH 实例」读取账户凭据。刷新会中断正在运行的 DSH 任务，请在任务结束后操作。
+
+临时登录页只监听服务器回环地址，约 15 分钟后关闭，也可提前点「结束登录」。正常使用时服务器凭据由 DSH 原生配置管理。[DeepSeek 账号登录限制](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/account/deepseek-account/README.md)
 
 ### 为新建工具指定代理
 
@@ -415,9 +430,9 @@ sudo /usr/bin/python3 -I "$PWD/scripts/migrate_mihomo_macos.py"
 | `git clone` 失败 | 本机打包 tar 或 `git bundle` 后 `scp` 上传；见「获取代码」 |
 | 缺少 `curl` / `tar` / `gzip` | 用系统包管理器安装；`bootstrap` 不会自动装系统包 |
 | 订阅下载失败或 HTTP 429 | 服务商限流或网络受限；换网络/等限流解除，或从能访问订阅的设备下载 YAML 后粘贴导入 |
-| Mihomo 校验失败，配置有 GEOIP/GEOSITE 或 DNS fallback geoip | 首次校验需要 Geo 数据；预置 `country.mmdb`、`geoip.metadb`、`geosite.dat` 或改用可达的 `geox-url` |
+| 导入配置提示「Mihomo 校验超时」 | Linux 独立服务和网页启动的内核会预取检测到的 Geo 数据。检查 `geox-url`、`proxy-providers` 和 `rule-providers` 的实际可达性。macOS 系统 TUN 的 Geo 下载由独立内核负责 |
 | Codex 登录失败 | 用 `codex login --device-auth`；需要代理时先设置 `HTTPS_PROXY` / `HTTP_PROXY` |
-| DSH 登录弹窗一闪而过 | DSH 账号登录使用回环回调，远程浏览器无法完成；优先在 DSH 设置里配置 API Key/提供方，或在能访问回调的本机完成登录 |
+| DSH 登录弹窗一闪而过 | 用 API Key，或在「登录与配置」准备账号登录并通过单独的 SSH 隧道访问 DSH 原生端口 |
 | `./console logs` 没有输出 | 确认 `systemctl --user` 可用；root 部署且无独立 user journal 时可用 `journalctl _SYSTEMD_USER_UNIT=server-console.service -n 80 -f` |
 | 终端复制不了 | 旧会话可用 Shift（Mac 用 Option）拖选，再点工具栏「复制选择」。若浏览器限制写入，按弹窗提示手动复制 |
 

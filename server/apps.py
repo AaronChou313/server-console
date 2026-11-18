@@ -191,8 +191,7 @@ def excluded(request):
     server = request.scope.get("server") or ()
     if len(server) > 1 and server[1]:
         ports.add(int(server[1]))
-    if dsh.port:
-        ports.add(int(dsh.port))
+    ports.update(port for port in (dsh.port, dsh.login_port) if port)
     ports.update(tunnel["port"] for tunnel in tunnels.values())
     return frozenset(ports)
 

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from . import mihomo_broker as broker
 from .runtime import ENV, STATE, binary, private_dir, read_json, replace, run
 
+from .mihomo_geo import ensure_geo, github_url
 from .subscriptions import profile_text
 
 router = APIRouter(prefix="/api/mihomo")
@@ -35,6 +36,9 @@ DELAY_SLOTS = asyncio.Semaphore(4)
 SELECTABLE = {"Selector", "URLTest", "Fallback"}
 MODES = Literal["rule", "global", "direct"]
 process = None
+
+VALIDATE_TIMEOUT = 35
+
 
 PROFILE_KEYS = (
     "proxies", "proxy-groups", "proxy-providers", "rules", "rule-providers", "mode",
@@ -372,8 +376,14 @@ async def checked(text, identity):
         if not isinstance(parsed, dict) or not any(key in parsed for key in ("proxies", "proxy-providers", "rules")):
             raise HTTPException(422, "请导入包含代理节点、节点提供者或路由规则的 Clash / Mihomo 配置")
         json.dumps(parsed, allow_nan=False)
-        if broker.socket_path():
-            await broker.request("POST", "/engine/validate", json={"source": parsed}, timeout=45)
+        independent = broker.socket_path()
+        geo_directory = STATE / "mihomo-service" if independent else HOME
+        # On macOS the independent TUN daemon owns a root-only data directory.
+        if independent and (platform.system() == "Darwin" or not geo_directory.is_dir()):
+            geo_directory = None
+        await ensure_geo(parsed, geo_directory)
+        if independent:
+            await broker.request("POST", "/engine/validate", json={"source": parsed}, timeout=VALIDATE_TIMEOUT + 10)
             return json.dumps(parsed, ensure_ascii=False)
         contents = normalize(parsed, identity)
     except (yaml.YAMLError, ValueError, TypeError, RecursionError) as error:
@@ -383,9 +393,9 @@ async def checked(text, identity):
     staged = HOME / "candidate.json"
     replace(staged, contents)
     try:
-        code, _, _ = await run(engine, "-t", "-d", str(HOME), "-f", str(staged), timeout=35)
+        code, _, _ = await run(engine, "-t", "-d", str(HOME), "-f", str(staged), timeout=VALIDATE_TIMEOUT)
         if code == 124:
-            raise HTTPException(504, "Mihomo 校验超时，请检查 GeoIP 数据和远程规则的下载地址")
+            raise HTTPException(504, "Mihomo 校验超时，请检查 Geo 数据、节点提供者或远程规则集的下载地址")
         if code:
             raise HTTPException(422, "Mihomo 配置校验失败，请检查节点和规则")
     finally:
@@ -622,12 +632,22 @@ async def install_engine():
     system = platform.system().lower()
     if not arch or system not in ("linux", "darwin"):
         raise HTTPException(400, "此设备架构需要手动安装 Mihomo")
-    github = "https://github.com/MetaCubeX/mihomo/releases/download/"
+    mirror = os.getenv("SERVER_CONSOLE_GITHUB_MIRROR", "")
     async with LOCK:
         try:
             async with asyncio.timeout(150):
                 async with httpx.AsyncClient(timeout=25, follow_redirects=True) as client:
-                    release = (await client.get("https://api.github.com/repos/MetaCubeX/mihomo/releases/latest")).raise_for_status().json()
+                    release_api = "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest"
+                    if mirror:
+                        try:
+                            response = await client.get(github_url(release_api, mirror))
+                            release = response.raise_for_status().json()
+                            if "tag_name" not in release:
+                                raise ValueError("invalid release response")
+                        except (httpx.HTTPError, ValueError):
+                            release = (await client.get(release_api)).raise_for_status().json()
+                    else:
+                        release = (await client.get(release_api)).raise_for_status().json()
                     tag = release["tag_name"]
                     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
                         raise ValueError("invalid version")
@@ -641,7 +661,7 @@ async def install_engine():
                     if not file:
                         raise ValueError("missing release asset")
                     contents = bytearray()
-                    async with client.stream("GET", f"{github}{tag}/{name}") as response:
+                    async with client.stream("GET", github_url(file["browser_download_url"], mirror)) as response:
                         response.raise_for_status()
                         async for chunk in response.aiter_bytes():
                             contents.extend(chunk)
@@ -651,7 +671,8 @@ async def install_engine():
                 raise ValueError("invalid release checksum")
             unpacked = gzip.decompress(contents)
         except (httpx.HTTPError, ValueError, KeyError, TimeoutError, OSError, EOFError) as error:
-            raise HTTPException(502, "无法下载官方 Mihomo 内核，请检查 GitHub 连通性") from error
+            raise HTTPException(502, "无法下载或校验官方 Mihomo 内核。可设置 SERVER_CONSOLE_GITHUB_MIRROR 使用镜像，"
+                                     "或自行下载官方二进制后用 SERVER_CONSOLE_MIHOMO 指向它") from error
         private_dir(MANAGED_ENGINE.parent)
         staged = MANAGED_ENGINE.with_suffix(".new")
         backup = MANAGED_ENGINE.with_suffix(".previous")

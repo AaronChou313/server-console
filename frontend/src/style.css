@@ -387,3 +387,5 @@ td { font-family: var(--mono); }
   .proxy-entry .row-actions { flex: 0 0 100%; justify-content: flex-start; }
   .proxy-entry .row-actions .button, .import-method button { min-height: 42px; }
 }
+
+.dsh-command { padding: 9px; background: var(--soft); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }

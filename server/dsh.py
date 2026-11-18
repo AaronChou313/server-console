@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import pwd
+import shlex
 import re
 import signal
 import socket
@@ -23,8 +25,14 @@ process = None
 reader = None
 port = None
 origin = None
-launch_token = None
 native_cookie = None
+login_process = None
+login_port = None
+login_token = None
+login_deadline = 0
+login_reader = None
+login_timer = None
+LOGIN_TTL = 900
 HOP = {"connection", "transfer-encoding", "keep-alive", "upgrade", "proxy-connection", "te", "trailer"}
 LOGIN_URL = re.compile(r"https?://[^\s]+[?&]token=[^\s]+")
 
@@ -35,72 +43,165 @@ def browser_origin(request):
 
 
 async def stop():
-    global process, reader, native_cookie
-    if process and process.returncode is None:
+    async with lock:
+        await stop_login()
+        await stop_web()
+
+
+def free_port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+async def terminate(child, output):
+    if child and child.returncode is None:
         try:
-            os.killpg(process.pid, signal.SIGTERM)
+            os.killpg(child.pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
         try:
-            await asyncio.wait_for(process.wait(), 3)
+            await asyncio.wait_for(child.wait(), 3)
         except asyncio.TimeoutError:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(child.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            await process.wait()
-    if reader:
-        reader.cancel()
-        await asyncio.gather(reader, return_exceptions=True)
+            await child.wait()
+    if output:
+        output.cancel()
+        await asyncio.gather(output, return_exceptions=True)
+
+
+async def stop_web():
+    global process, reader, native_cookie
+    child, output = process, reader
     reader = process = native_cookie = None
+    await terminate(child, output)
 
 
-async def stdout():
-    global launch_token
-    while line := await process.stdout.readline():
-        match = LOGIN_URL.search(line.decode(errors="replace"))
-        if match:
-            url = urlsplit(match[0])
-            launch_token = parse_qs(url.query).get("token", [None])[0]
+async def stop_login():
+    global login_process, login_port, login_token, login_deadline, login_reader, login_timer
+    child, output, timer = login_process, login_reader, login_timer
+    login_process = login_port = login_token = login_reader = login_timer = None
+    login_deadline = 0
+    if timer and timer is not asyncio.current_task():
+        timer.cancel()
+    await terminate(child, output)
+
+
+async def drain_output(stream, ready):
+    try:
+        while line := await stream.readline():
+            if ready.done():
+                continue
+            match = LOGIN_URL.search(line.decode(errors="replace"))
+            if match:
+                url = urlsplit(match[0])
+                if token := parse_qs(url.query).get("token", [None])[0]:
+                    ready.set_result(token)
+    finally:
+        if not ready.done():
+            ready.set_result(None)
+
+
+async def launch(web_port, *options):
+    try:
+        child = await asyncio.create_subprocess_exec(
+            require("dsh"), "web", "--host", "127.0.0.1", "--port", str(web_port), "--no-open",
+            *options, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            cwd=HOME, env=ai_env(), start_new_session=True,
+        )
+    except OSError:
+        raise HTTPException(502, "无法启动 DSH，请在服务器执行 dsh web --help 检查安装") from None
+    ready = asyncio.get_running_loop().create_future()
+    output = asyncio.create_task(drain_output(child.stdout, ready))
+    try:
+        token = await asyncio.wait_for(ready, 45)
+        if not token:
+            raise HTTPException(502, "DSH 启动提前退出，请在服务器运行 dsh web 检查安装与配置")
+        return child, output, token
+    except asyncio.TimeoutError:
+        await terminate(child, output)
+        raise HTTPException(504, "DSH 启动超时，请在服务器运行 dsh web 检查安装与配置") from None
+    except (HTTPException, asyncio.CancelledError):
+        await terminate(child, output)
+        raise
+
+
+async def expire_login(deadline):
+    await asyncio.sleep(LOGIN_TTL)
+    async with lock:
+        if login_deadline == deadline:
+            await stop_login()
 
 
 @router.post("/api/dsh/web")
 async def start(request: Request):
-    global process, reader, port, origin, launch_token, native_cookie
     async with lock:
-        if not process or process.returncode is not None:
-            await stop()
-            with socket.socket() as sock:
-                sock.bind(("127.0.0.1", 0))
-                port = sock.getsockname()[1]
-            origin = browser_origin(request)
-            launch_token = None
-            process = await asyncio.create_subprocess_exec(
-                require("dsh"), "web", "--host", "127.0.0.1", "--port", str(port),
-                "--no-open", "--public-url", origin + "/dsh/", "--trusted-host", urlsplit(origin).netloc,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                cwd=HOME, env=ai_env(), start_new_session=True,
-            )
-            reader = asyncio.create_task(stdout())
-        for _ in range(100):
-            if launch_token:
-                if not native_cookie:
-                    base = f"http://127.0.0.1:{port}"
-                    async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
-                        try:
-                            response = await client.get(base + "/", params={"token": launch_token},
-                                                        headers={"Origin": base})
-                        except httpx.HTTPError:
-                            raise HTTPException(502, "DSH Web 本机认证失败") from None
-                    if response.status_code != 303 or not response.cookies:
-                        raise HTTPException(502, "DSH Web 本机认证失败")
-                    native_cookie = "; ".join(f"{key}={value}" for key, value in response.cookies.items())
-                return {"url": "/dsh/"}
-            if process.returncode is not None or reader.done():
-                await stop()
-                raise HTTPException(502, "DSH Web 启动失败。请在原生终端中检查 dsh web。")
-            await asyncio.sleep(0.1)
-        raise HTTPException(503, "DSH Web 仍在启动，请稍后重试")
+        if process and process.returncode is None and native_cookie:
+            return {"url": "/dsh/"}
+        return await boot(browser_origin(request))
+
+
+@router.post("/api/dsh/restart")
+async def restart(request: Request):
+    async with lock:
+        await stop_login()
+        return await boot(browser_origin(request))
+
+
+@router.post("/api/dsh/login")
+async def login_helper(request: Request):
+    global login_process, login_port, login_token, login_deadline, login_reader, login_timer
+    async with lock:
+        now = asyncio.get_running_loop().time()
+        if not (login_process and login_process.returncode is None and login_token and login_deadline > now):
+            await stop_login()
+            login_port = free_port()
+            login_process, login_reader, login_token = await launch(login_port)
+            login_deadline = asyncio.get_running_loop().time() + LOGIN_TTL
+            login_timer = asyncio.create_task(expire_login(login_deadline))
+        host = request.url.hostname
+        user = pwd.getpwuid(os.getuid()).pw_name
+        destination = (shlex.quote(f"{user}@{host}")
+                       if host and host not in {"localhost", "127.0.0.1", "::1"} else "用户名@服务器地址")
+        base = f"http://127.0.0.1:{login_port}/"
+        return {
+            "url": str(httpx.URL(base, params={"token": login_token})),
+            "command": f"ssh -N -L 127.0.0.1:{login_port}:127.0.0.1:{login_port} {destination}",
+            "seconds": int(login_deadline - asyncio.get_running_loop().time()) + 1,
+        }
+
+
+@router.post("/api/dsh/login/stop")
+async def login_stop():
+    async with lock:
+        await stop_login()
+        return {"ok": True}
+
+
+async def boot(request_origin):
+    global process, reader, port, origin, native_cookie
+    await stop_web()
+    origin = request_origin
+    port = free_port()
+    process, reader, token = await launch(port, "--public-url", origin + "/dsh/",
+                                          "--trusted-host", urlsplit(origin).netloc)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
+            response = await client.get(base + "/", params={"token": token}, headers={"Origin": base})
+        if response.status_code != 303 or not response.cookies:
+            raise HTTPException(502, "DSH Web 本机认证失败")
+        native_cookie = "; ".join(f"{key}={value}" for key, value in response.cookies.items())
+    except httpx.HTTPError:
+        await stop_web()
+        raise HTTPException(502, "DSH Web 本机认证失败") from None
+    except (HTTPException, asyncio.CancelledError):
+        await stop_web()
+        raise
+    return {"url": "/dsh/"}
 
 
 def upstream_headers(request, websocket=False):

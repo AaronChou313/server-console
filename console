@@ -3,6 +3,9 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$HOME/.local/share/server-console/node24/bin:$PATH:$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export SERVER_CONSOLE_STATE="${SERVER_CONSOLE_STATE:-$HOME/.config/server-console}"
+if [ -n "${SERVER_CONSOLE_NPM_REGISTRY:-}" ]; then
+  export npm_config_registry="$SERVER_CONSOLE_NPM_REGISTRY"
+fi
 label=local.server-console
 unit=server-console.service
 case "$(uname -s)" in

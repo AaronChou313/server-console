@@ -275,6 +275,7 @@ function SessionForm({kind, mode, onClose, onCreate}) {
       {projects.data?.length > 0 && <label>常用目录<select value={projects.data.includes(cwd) ? cwd : ''} onChange={e => e.target.value && setCwd(e.target.value)}>
         <option value="">选择主机目录</option>{projects.data.map(path => <option key={path} value={path}>{path}</option>)}
       </select></label>}
+      {kind === 'codex' && mode === 'new' && <p className="form-note">远程服务器首次登录时，可在终端运行 <code>codex login --device-auth</code>。</p>}
       <label>标签名称<input value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="可选"/></label>
       {mode === 'resume' && <>
         <label>恢复方式<select value={resume} onChange={e => setResume(e.target.value)}>
