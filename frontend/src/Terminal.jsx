@@ -251,9 +251,14 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
   }
   async function stop() {
     setBusy(true)
+    setError('')
+    const id = end.id
+    // Detach the terminal client first; killing a session with a live client
+    // attached can leave Zellij's server stuck.
+    close(id)
+    await new Promise(resolve => setTimeout(resolve, 150))
     try {
-      await api('/terminal/' + encodeURIComponent(end.id), {method: 'DELETE'})
-      close(end.id)
+      await api('/terminal/' + encodeURIComponent(id), {method: 'DELETE'})
       setEnd(null)
       resource.reload()
     } catch (e) {setError(e.message)}

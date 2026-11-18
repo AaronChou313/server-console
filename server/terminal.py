@@ -12,6 +12,7 @@ import tempfile
 import termios
 import uuid
 
+import psutil
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
@@ -130,14 +131,50 @@ async def new_session(kind: str, form: NewSession):
     return await create_session(kind, cwd, form.name.strip() or names[kind], command)
 
 
+def session_servers(session):
+    marker = "/" + session
+    found = []
+    for process in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            command = process.info["cmdline"] or []
+            if "--server" not in command:
+                continue
+            index = command.index("--server")
+            socket = command[index + 1] if index + 1 < len(command) else ""
+            if socket.endswith(marker):
+                found.append((process.info["pid"], socket))
+        except (psutil.Error, ValueError):
+            continue
+    return found
+
+
+def force_stop(servers):
+    for pid, socket in servers:
+        try:
+            process = psutil.Process(pid)
+            if process.is_running():
+                process.kill()
+                process.wait(1)
+        except psutil.Error:
+            pass
+        try:
+            os.unlink(socket)
+        except OSError:
+            pass
+
+
 @router.delete("/api/terminal/{session}")
 async def stop_session(session: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", session):
+        raise HTTPException(400, "无效的会话名")
     async with LOCK:
-        if session not in await active_sessions():
-            raise HTTPException(404, "会话已结束")
-        code, out, err = await run(*zellij(), "kill-session", session)
-        if code:
-            raise HTTPException(502, (err or out).strip())
+        # list-sessions can block on one unresponsive session, so do not consult
+        # it here. Kill, then force-kill a server that ignored the request.
+        await run(*zellij(), "kill-session", session, timeout=6)
+        servers = await asyncio.to_thread(session_servers, session)
+        if servers:
+            await asyncio.sleep(0.8)
+            await asyncio.to_thread(force_stop, servers)
         if MANAGED.fullmatch(session):
             items = metadata()
             items.pop(session, None)
