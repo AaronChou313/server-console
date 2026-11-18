@@ -4,6 +4,7 @@ import {ArrowRight, Box, ChevronDown, Command, LayoutDashboard, LogOut, Menu, Mo
 import {api, useResource} from './api'
 import {Badge, Button, CardTitle, ErrorNotice, Loading, Modal, PageTitle} from './ui'
 import Overview from './Overview'
+import DshPage from './DshPage'
 import {DockerPage, NetworkPage, SSHPage} from './Management'
 import './style.css'
 
@@ -24,8 +25,9 @@ const fonts = {
   classic: 'Consolas, "Liberation Mono", monospace',
   courier: '"Courier New", monospace',
 }
+const terminalFamily = font => '"Console Powerline", ' + (fonts[font] || fonts.system)
 const isAI = page => page === 'codex' || page === 'dsh'
-const isTerminal = page => page === 'terminal' || isAI(page)
+const isTerminal = page => page === 'terminal' || page === 'codex'
 function readPage() {
   const page = location.hash.slice(1)
   return Object.hasOwn(pages, page) ? page : 'overview'
@@ -45,7 +47,7 @@ function Brand() {
 
 function SettingsPage({theme, setTheme, font, setFont, fontFamily, setFontFamily, tools}) {
   return <div className="page">
-    <PageTitle title="设置" description="自定义当前浏览器的外观与终端显示。"/>
+    <PageTitle title="设置"/>
     <section className="card settings-card">
       <CardTitle icon={Monitor} title="外观"/>
       <div className="settings-row"><div><strong>主题</strong><p>跟随设备设置，或使用固定主题。</p></div>
@@ -136,7 +138,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
         </div>
       </div>
     </aside>
-    <main className="main">
+    <main className={isTerminal(page) || page === 'dsh' ? 'main workspace-main' : 'main'}>
       {!hidden && <header className="topbar">
         <div className="topbar-left">
           <Button icon={Menu} className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}/>
@@ -150,8 +152,9 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
         </div>
       </header>}
       {page === 'overview' && <Overview data={overview.data} error={overview.error} go={go}/>}
-      {isTerminal(page) && <Suspense fallback={<Loading/>}><TerminalPage key={page} kind={page === 'terminal' ? 'shell' : page} font={font} family={fonts[fontFamily] || fonts.system}
+      {isTerminal(page) && <Suspense fallback={<Loading/>}><TerminalPage key={page} kind={page === 'terminal' ? 'shell' : page} font={font} family={terminalFamily(fontFamily)}
         hidden={hidden} setHidden={setHidden} tabs={tabs} setTabs={setTabs} active={active} select={setActive} tools={tools.data}/></Suspense>}
+      {page === 'dsh' && <DshPage/>}
       {page === 'docker' && <DockerPage openTerminal={openTerminal}/>}
       {page === 'ssh' && <SSHPage openTerminal={openTerminal}/>}
       {page === 'network' && <NetworkPage/>}
@@ -177,7 +180,7 @@ function Login({configured, done}) {
     <div className="login-box">
       <Brand/>
       <section className="card login-card">
-        <h1>连接到主机</h1><p>使用 Server Console 的本地管理员密码。</p>
+        <h1>连接到主机</h1>
         {!configured ? <div className="notice warning">请先在主机上执行 <code>./console password</code>，设置后刷新页面。</div> :
           <form className="form" onSubmit={submit}>
             <label>管理员密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required autoFocus maxLength={256}/></label>

@@ -26,7 +26,7 @@ export function DockerPage({openTerminal}) {
     finally {setBusy(false)}
   }
   return <div className="page">
-    <PageTitle title="Docker" description="查看容器状态、资源占用与日志。">
+    <PageTitle title="Docker">
       {ready && <Badge tone="good">Engine {resource.data.version}</Badge>}
       <Button icon={RefreshCw} onClick={() => {resource.reload(); usage.reload()}}>刷新</Button>
     </PageTitle>
@@ -94,7 +94,7 @@ export function SSHPage({openTerminal}) {
     finally {setBusy(false)}
   }
   return <div className="page">
-    <PageTitle title="SSH 主机" description="使用系统 OpenSSH、现有密钥和 ~/.ssh/config。">
+    <PageTitle title="SSH 主机">
       <Button icon={RefreshCw} aria-label="刷新 SSH 配置" onClick={resource.reload}/>
       <Button icon={Plus} variant="primary" onClick={() => edit()}>添加主机</Button>
     </PageTitle>
@@ -153,7 +153,7 @@ export function NetworkPage() {
     document.getElementById('probe-target')?.scrollIntoView({block: 'center'})
   }
   return <div className="page">
-    <PageTitle title="网络状态" description="检查主机接口、Tailnet 设备与连通性。"><Button icon={RefreshCw} onClick={reload}>刷新</Button></PageTitle>
+    <PageTitle title="网络状态"><Button icon={RefreshCw} onClick={reload}>刷新</Button></PageTitle>
     <ErrorNotice>{error}</ErrorNotice>
     <div className="network-grid">
       <section className="card">

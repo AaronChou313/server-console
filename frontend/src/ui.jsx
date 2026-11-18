@@ -11,9 +11,9 @@ export function Badge({tone = 'neutral', children}) {
   return <span className={'badge ' + tone}><i/>{children}</span>
 }
 
-export function PageTitle({icon: Icon, title, description, children}) {
+export function PageTitle({icon: Icon, title, children}) {
   return <div className="page-title">
-    <div>{Icon && <span className="page-icon"><Icon size={21}/></span>}<h1>{title}</h1>{description && <p>{description}</p>}</div>
+    <div>{Icon && <span className="page-icon"><Icon size={21}/></span>}<h1>{title}</h1></div>
     {children && <div className="actions">{children}</div>}
   </div>
 }
@@ -22,8 +22,8 @@ export function ErrorNotice({children}) {
   return children ? <div role="alert" className="notice error"><AlertCircle size={17}/><span>{children}</span></div> : null
 }
 
-export function Loading() {
-  return <div className="empty" role="status"><LoaderCircle className="spinner" size={20}/> 正在读取主机数据…</div>
+export function Loading({children = '正在读取主机数据…'}) {
+  return <div className="empty" role="status"><LoaderCircle className="spinner" size={20}/> {children}</div>
 }
 
 export function Empty({icon: Icon, title, children}) {

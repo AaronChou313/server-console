@@ -101,11 +101,9 @@ async def new_session(kind: str, form: NewSession):
             else:
                 arguments = modes[form.resume]
             command = [command[0], "resume", "--no-alt-screen", *arguments]
-    elif kind == "dsh":
-        command = [require("dsh"), "tui"]
     else:
         raise HTTPException(404)
-    names = {"shell": "Shell", "codex": "Codex", "dsh": "DeepSeek Harness"}
+    names = {"shell": "Shell", "codex": "Codex"}
     return await create_session(kind, cwd, form.name.strip() or names[kind], command)
 
 
@@ -195,7 +193,10 @@ async def socket(ws: WebSocket, session: str):
         if session not in await active_sessions():
             await ws.close(4404, "会话已结束")
             return
-        argv = [*zellij(), "attach", session]
+        # The client options are merged into the existing session's runtime options.
+        # Apply the Locked preset only when creating a console-managed session.
+        argv = [require("zellij"), "--config", os.devnull, "attach", session,
+                "options", "--on-force-close", "detach"]
         cols = max(2, min(1000, int(ws.query_params.get("cols", "100"))))
         rows = max(2, min(500, int(ws.query_params.get("rows", "30"))))
     except (HTTPException, ValueError):

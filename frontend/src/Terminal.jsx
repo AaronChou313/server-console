@@ -1,10 +1,10 @@
 import React, {useEffect, useRef, useState} from 'react'
-import {ArrowDown, ArrowUp, ClipboardPaste, Copy, ExternalLink, FileUp, History, Keyboard, Maximize, Minimize, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, SquareTerminal, X} from 'lucide-react'
+import {ArrowDown, ArrowUp, ClipboardPaste, Copy, FileUp, History, Keyboard, List, Maximize, Minimize, PanelLeftClose, PanelLeftOpen, Plus, RefreshCw, SquareTerminal, X} from 'lucide-react'
 import {Terminal} from '@xterm/xterm'
 import {FitAddon} from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import {api, useResource} from './api'
-import {Badge, Button, Empty, ErrorNotice, Modal, PageTitle} from './ui'
+import {Button, Empty, ErrorNotice, Modal, PageTitle} from './ui'
 
 const encoder = new TextEncoder()
 const terminalColors = {
@@ -24,6 +24,7 @@ function TerminalView({id, font, family, connectRef, status}) {
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(el)
+    if (matchMedia('(pointer: fine)').matches) term.focus()
     let socket, retry, frame, waiting = 400, disposed = false, reconnectable = true
     let received = false
     const send = input => {
@@ -150,7 +151,7 @@ function SessionForm({kind, mode, onClose, onCreate}) {
   const [sessionId, setSessionId] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const title = mode === 'resume' ? '恢复 Codex 历史会话' : kind === 'codex' ? '新建 Codex 会话' : kind === 'dsh' ? '新建 DSH 终端' : '新建终端会话'
+  const title = mode === 'resume' ? '恢复 Codex 历史会话' : kind === 'codex' ? '新建 Codex 会话' : '新建终端会话'
   async function submit(event) {
     event.preventDefault()
     setBusy(true)
@@ -196,12 +197,11 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
   const [pasteValue, setPasteValue] = useState('')
   const [full, setFull] = useState(false)
   const [keys, setKeys] = useState(false)
-  const [dshFrame, setDshFrame] = useState('')
-  const [dshBusy, setDshBusy] = useState(false)
+  const [showSessions, setShowSessions] = useState(false)
   const [copyNotice, setCopyNotice] = useState('')
   const terminal = useRef(null), file = useRef(null), workspace = useRef(null)
-  const attachmentsAllowed = kind === 'codex' || kind === 'shell'
-  const title = kind === 'codex' ? 'Codex' : kind === 'dsh' ? 'DeepSeek Harness' : 'Web 终端'
+  const sessionPanel = useRef(null), sessionToggle = useRef(null)
+  const title = kind === 'codex' ? 'Codex' : 'Web 终端'
   const matching = (resource.data || []).filter(item => kind === 'shell' || item.kind === kind)
   const tabList = tabs.filter(item => kind === 'shell' || item.kind === kind)
   const current = tabList.find(item => item.id === active) || tabList.at(-1)
@@ -215,6 +215,17 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
   useEffect(() => {
+    if (!showSessions) return
+    sessionPanel.current?.focus()
+    const onPointerDown = event => {
+      if (!sessionPanel.current?.contains(event.target) && !sessionToggle.current?.contains(event.target)) {
+        setShowSessions(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [showSessions])
+  useEffect(() => {
     if (!copyNotice) return
     const timer = setTimeout(() => setCopyNotice(''), 2900)
     return () => clearTimeout(timer)
@@ -223,7 +234,8 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
   function open(item) {
     setTabs(list => list.some(tab => tab.id === item.id) ? list : [...list, item])
     select(item.id)
-    setDshFrame('')
+    setShowSessions(false)
+    if (current?.id === item.id) terminal.current?.focus()
     setDialog('')
     setError('')
     resource.reload()
@@ -266,33 +278,19 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
       terminal.current?.paste(value)
     } catch {setPasteBox(true)}
   }
-  async function startDsh(external) {
-    const popup = external ? window.open('about:blank', '_blank') : null
-    if (popup) popup.opener = null
-    setDshBusy(true)
-    setError('')
-    try {
-      const result = await api('/dsh/web', {method: 'POST', body: {}})
-      if (popup) popup.location.replace(result.url)
-      else setDshFrame(result.url)
-    } catch (e) {
-      popup?.close()
-      setError(e.message)
-    } finally {setDshBusy(false)}
+  function closeSessions() {
+    setShowSessions(false)
+    sessionToggle.current?.focus()
   }
   return <div className={'page terminal-page' + (focusMode ? ' terminal-focused' : '')}>
-    {!focusMode && <PageTitle title={title} description={kind === 'codex' ? '在主机项目中运行原生 Codex CLI。' : kind === 'dsh' ? '使用官方 Web 界面，或在 Zellij 中运行原生 CLI。' : '连接主机 Shell 与持久化 Zellij 会话。'}>
-      {kind === 'dsh' && <Button icon={ExternalLink} disabled={!installed || dshBusy} onClick={() => startDsh(true)}>新标签页打开</Button>}
+    {!focusMode && <PageTitle title={title}>
       {kind === 'codex' && <Button icon={History} disabled={!canCreate} onClick={() => setDialog('resume')}>恢复历史</Button>}
-      <Button icon={Plus} variant="primary" disabled={!canCreate} onClick={() => setDialog('new')}>{kind === 'dsh' ? '新建 DSH 终端' : '新建会话'}</Button>
+      <Button icon={Plus} variant="primary" disabled={!canCreate} onClick={() => setDialog('new')}>新建会话</Button>
     </PageTitle>}
     <ErrorNotice>{error || (tools?.zellij && resource.error)}</ErrorNotice>
     {tools && !installed && <div className="notice warning">{kind === 'shell' ? '未检测到 Zellij。请安装 Zellij 0.45 或更新版本。' : '当前主机未检测到 ' + title + '。安装官方 CLI 后刷新本页。'}</div>}
     {tools && installed && !tools.zellij && <div className="notice warning">持久终端需要 Zellij 0.45 或更新版本。</div>}
-    {kind === 'dsh' && !dshFrame && !focusMode && <div className="card dsh-launch"><div><strong>DSH Web</strong><p>沿用主机用户的 DSH 配置与历史。</p></div><Button variant="primary" disabled={!installed || dshBusy} onClick={() => startDsh(false)}>{dshBusy ? '正在启动…' : '打开 DSH Web'}</Button></div>}
-    {dshFrame && <section className="card dsh-frame"><div className="card-title"><h2>DSH Web</h2><Button icon={X} aria-label="关闭 DSH Web" onClick={() => setDshFrame('')}/></div><iframe src={dshFrame} title="DeepSeek Harness 官方 Web"/></section>}
-    {!dshFrame && <section ref={workspace} className={'terminal-workspace' + (full ? ' full' : '') + (current ? '' : ' idle')} onPasteCapture={event => {
-      if (!attachmentsAllowed) return
+    <section ref={workspace} className={'terminal-workspace' + (full ? ' full' : '')} onPasteCapture={event => {
       const image = [...(event.clipboardData?.files || [])].find(blob => blob.type.startsWith('image/'))
       if (image) {event.preventDefault(); event.stopPropagation(); upload(image)}
     }}>
@@ -300,25 +298,32 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
         <Button icon={hidden ? PanelLeftOpen : PanelLeftClose} aria-label={hidden ? '显示导航栏' : '隐藏导航栏'} title={hidden ? '显示导航栏' : '隐藏导航栏'} onClick={() => setHidden(!hidden)}/>
         <div className="terminal-tabs" role="tablist" aria-label="已打开的会话">
           {tabList.map(item => <div className={'term-tab' + (current?.id === item.id ? ' selected' : '')} key={item.id}>
-            <button role="tab" aria-selected={current?.id === item.id} onClick={() => select(item.id)} title={item.cwd || item.name}><SquareTerminal size={14}/>{item.name}</button>
+            <button role="tab" aria-selected={current?.id === item.id} onClick={() => {select(item.id); if (current?.id === item.id) terminal.current?.focus()}} title={item.cwd || item.name}><SquareTerminal size={14}/><span>{item.name}</span></button>
             <button className="close-tab" aria-label={'关闭标签 ' + item.name} title="关闭标签，保留会话" onClick={() => close(item.id)}><X size={14}/></button>
           </div>)}
-          <Button icon={Plus} disabled={!canCreate} title="新建会话" aria-label="新建终端标签" onClick={() => setDialog('new')}/>
+          {(current || focusMode) && <Button icon={Plus} disabled={!canCreate} title="新建会话" aria-label="新建终端标签" onClick={() => setDialog('new')}/>}
         </div>
+        <button ref={sessionToggle} type="button" className="button sessions-toggle" title="运行中的会话"
+          aria-label="运行中的会话" aria-expanded={showSessions} aria-controls="terminal-sessions"
+          onClick={() => showSessions ? closeSessions() : setShowSessions(true)}>
+          <List size={16}/><span>会话</span>{resource.data && <span className="session-count">{matching.length}</span>}
+        </button>
         <Button icon={RefreshCw} disabled={!current} aria-label="重连" title="重连" onClick={() => terminal.current?.retry()}/>
-        {attachmentsAllowed && <Button icon={FileUp} title="上传文件或图片" aria-label="上传文件或图片" onClick={() => file.current.click()}/>}
+        <Button icon={FileUp} title="上传文件或图片" aria-label="上传文件或图片" onClick={() => file.current.click()}/>
         <Button icon={full ? Minimize : Maximize} title={full ? '退出全屏' : '全屏终端'} aria-label={full ? '退出全屏' : '全屏终端'} onClick={toggleFull}/>
         <input ref={file} hidden type="file" onChange={e => {upload(e.target.files[0]); e.target.value = ''}}/>
       </div>
       {current ? <TerminalView key={current.id} id={current.id} font={font} family={family} connectRef={terminal} status={setStatus}/> :
-        <Empty icon={SquareTerminal} title="打开一个终端会话">
-          <p>{matching.length ? '从运行中会话连接，或打开一个新会话。' : '新建会话后可以在这里进行交互。'}</p>
-          {canCreate && <Button icon={Plus} onClick={() => setDialog('new')}>新建会话</Button>}
+        <Empty icon={SquareTerminal} title="没有打开的会话">
+          {matching.length > 0 ? <Button icon={List} onClick={() => setShowSessions(true)}>查看会话</Button>
+            : focusMode && canCreate && <Button icon={Plus} onClick={() => setDialog('new')}>新建会话</Button>}
         </Empty>}
       <div className="terminal-footer">
         <span className={'connection ' + (current && status === '已连接' ? 'connected' : '')}><i/>{current ? status : '未连接'}</span>
         {current && <><span className="terminal-cwd" title={current.cwd}>{current.cwd || current.id}</span><div className="terminal-actions">
           {copyNotice && <span role="status">{copyNotice}</span>}
+          {current.managed === false && <Button title="发送 Esc，退出 Zellij 的滚动或快捷键模式"
+            disabled={status !== '已连接'} onClick={() => terminal.current?.send('\x1b')}>恢复输入</Button>}
           <Button icon={Keyboard} title="终端快捷键" aria-label="终端快捷键" onClick={() => setKeys(!keys)}/>
           <Button icon={Copy} title="复制选择" aria-label="复制选择" onClick={() => copy(terminal.current?.selection())}/>
           <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" onClick={paste}/>
@@ -329,15 +334,25 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
       {attachment && <div className="terminal-attachment"><label>已上传<input aria-label="服务器文件路径" readOnly value={attachment} onFocus={e => e.target.select()}/></label>
         <Button icon={Copy} aria-label="复制文件路径" onClick={() => copy(attachment)}/><Button disabled={!current} onClick={() => terminal.current?.paste(attachment)}>插入路径</Button><Button icon={X} aria-label="关闭文件路径" onClick={() => setAttachment('')}/>
       </div>}
-    </section>}
-    {!focusMode && !dshFrame && <section className="card sessions">
-      <div className="card-title"><h2>运行中会话 <span className="count">{matching.length}</span></h2><Button icon={RefreshCw} aria-label="刷新会话" onClick={resource.reload}/></div>
-      {kind === 'codex' && <p className="section-note">连接会回到仍在运行的 Zellij 会话。恢复历史会在新的 Zellij 会话里执行 <code>codex resume</code>。</p>}
-      {matching.length ? matching.map(item => <div className="entry" key={item.id}>
-        <span className="metric-icon slate"><SquareTerminal size={16}/></span><div className="entry-text"><strong>{item.name}</strong><small>{item.cwd || item.id}</small></div>
-        <Badge tone="good">运行中</Badge><div className="row-actions"><Button onClick={() => open(item)}>连接</Button><Button variant="danger" onClick={() => {setError(''); setEnd(item)}}>结束</Button></div>
-      </div>) : <div className="empty compact">{resource.data ? '暂无运行中的会话' : '等待读取 Zellij 会话'}</div>}
-    </section>}
+      {showSessions && <section id="terminal-sessions" className="card sessions" ref={sessionPanel} tabIndex={-1}
+        aria-labelledby="terminal-sessions-title" onKeyDown={event => {
+          if (event.key === 'Escape') {event.stopPropagation(); closeSessions()}
+        }}>
+        <div className="card-title">
+          <h2 id="terminal-sessions-title">运行中的会话</h2>
+          <div className="actions"><Button icon={RefreshCw} aria-label="刷新会话" onClick={resource.reload}/><Button icon={X} aria-label="关闭会话列表" onClick={closeSessions}/></div>
+        </div>
+        <div className="sessions-list">
+          {matching.length ? matching.map(item => <div className="entry" key={item.id}>
+            <div className="entry-text"><strong title={item.name}>{item.name}</strong>{item.cwd && <small title={item.cwd}>{item.cwd}</small>}</div>
+            <div className="row-actions">
+              <Button variant={current?.id === item.id ? '' : 'primary'} onClick={() => open(item)}>{current?.id === item.id ? '返回' : '连接'}</Button>
+              <Button variant="danger" onClick={() => {setError(''); setEnd(item)}}>结束</Button>
+            </div>
+          </div>) : <div className="empty compact">{resource.error || (resource.data ? '暂无运行中的会话' : '正在读取 Zellij 会话…')}</div>}
+        </div>
+      </section>}
+    </section>
     {dialog && <SessionForm kind={kind} mode={dialog} onClose={() => setDialog('')} onCreate={open}/>}
     {end && <Modal title="结束 Zellij 会话" onClose={() => setEnd(null)}><p>结束「{end.name}」将终止其中正在运行的进程。</p><ErrorNotice>{error}</ErrorNotice><div className="form-actions"><Button onClick={() => setEnd(null)}>取消</Button><Button variant="danger solid" disabled={busy} onClick={stop}>结束会话</Button></div></Modal>}
     {pasteBox && <Modal title="粘贴到终端" onClose={() => setPasteBox(false)}><form className="form" onSubmit={event => {event.preventDefault(); setPasteBox(false); terminal.current?.paste(pasteValue); setPasteValue('')}}><textarea aria-label="粘贴内容" rows={5} placeholder="在此粘贴文字" autoFocus value={pasteValue} onChange={e => setPasteValue(e.target.value)}/><div className="form-actions"><button className="button primary">发送到终端</button></div></form></Modal>}

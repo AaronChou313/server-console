@@ -48,7 +48,7 @@ export default function Overview({data, error, go}) {
   const max = metric === 'usage' ? 100 : netMax
   const series = lines.map(values => chartPoints(values, max, 640, 180))
   return <div className="page overview">
-    <PageTitle title="系统概览" description="监控主机资源、运行状态与常用服务。">
+    <PageTitle title="系统概览">
       <Badge tone={error ? 'bad' : data ? 'good' : 'neutral'}>{error ? '采样中断' : data ? '实时更新 · 3 秒' : '正在连接'}</Badge>
     </PageTitle>
     <ErrorNotice>{error}</ErrorNotice>
