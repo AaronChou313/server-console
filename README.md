@@ -345,7 +345,8 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 ### 终端和 Codex
 
 - 终端由 Zellij 承载。浏览器标签关闭或刷新不会终止服务器上的进程；用「结束」明确停止。
-- 「运行中的会话」可附着到原会话；「恢复历史」新建 Zellij 容器会话后调用 `codex resume`。
+- 「运行中的会话」可附着到原会话。关闭标签、刷新页面和网络重连都会保留会话。「恢复历史」另建 Zellij 会话并调用 `codex resume`。
+- 「结束」会请求 Zellij 退出指定会话。会话卡住时，在同一个对话框里可以选择「强制结束」，其中运行的进程会被中止。
 - 新会话默认使用 Zellij 的 Locked 模式；需要 Zellij 快捷键时按 `Ctrl+g`。
 - 复制用终端工具栏；TUI 开启鼠标模式时先按住 `Shift` 拖选。手机底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 键。
 - 单文件上传上限 25 MiB，保存在 `~/.config/server-console/uploads/`。

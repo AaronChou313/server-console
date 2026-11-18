@@ -10,7 +10,7 @@ export async function api(path, {method = 'GET', body, signal} = {}) {
   const value = res.headers.get('content-type')?.includes('application/json') ? await res.json() : null
   if (!res.ok) {
     if (res.status === 401 && path !== '/login') window.dispatchEvent(new Event('console-logout'))
-    throw new Error(typeof value?.detail === 'string' ? value.detail : `请求失败（HTTP ${res.status}）`)
+    throw Object.assign(new Error(typeof value?.detail === 'string' ? value.detail : `请求失败（HTTP ${res.status}）`), {status: res.status})
   }
   return value
 }

@@ -26,9 +26,10 @@ function TerminalView({id, font, family, connectRef, status}) {
     term.open(el)
     if (matchMedia('(pointer: fine)').matches) term.focus()
     let socket, retry, frame, waiting = 400, disposed = false, reconnectable = true
-    let received = false
+    let ready = false, lastActivity = 0
+    const isReady = () => ready && socket?.readyState === WebSocket.OPEN
     const send = input => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(input))
+      if (isReady()) socket.send(encoder.encode(input))
     }
     const size = () => {
       if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({cols: term.cols, rows: term.rows}))
@@ -42,7 +43,7 @@ function TerminalView({id, font, family, connectRef, status}) {
     const resize = term.onResize(size)
     const data = term.onData(send)
     const binary = term.onBinary(input => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(Uint8Array.from(input, char => char.charCodeAt(0)))
+      if (isReady()) socket.send(Uint8Array.from(input, char => char.charCodeAt(0)))
     })
     term.attachCustomKeyEventHandler(event => {
       if (event.type !== 'keydown') return true
@@ -53,53 +54,93 @@ function TerminalView({id, font, family, connectRef, status}) {
       }
       return true
     })
+    function dropSocket() {
+      const stale = socket
+      socket = null
+      ready = false
+      stale?.close()
+    }
+    function reconnect() {
+      status(navigator.onLine ? '连接中断 · 正在重试' : '网络离线 · 等待重连')
+      if (!navigator.onLine) return
+      retry = setTimeout(connect, waiting)
+      waiting = Math.min(waiting * 2, 5000)
+    }
     function connect() {
-      if (disposed || !reconnectable || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return
+      if (disposed || !reconnectable || socket || !navigator.onLine) return
       clearTimeout(retry)
       if (el.clientWidth >= 20 && el.clientHeight >= 20) fit.fit()
-      status(received ? '正在重连' : '正在连接')
-      socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host +
+      status('正在连接')
+      const connection = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host +
         '/ws/terminal/' + encodeURIComponent(id) + '?cols=' + term.cols + '&rows=' + term.rows)
-      socket.binaryType = 'arraybuffer'
-      socket.onopen = () => {if (!disposed) size()}
-      socket.onmessage = event => {
-        if (disposed) return
-        if (!received) {
+      socket = connection
+      connection.binaryType = 'arraybuffer'
+      lastActivity = Date.now()
+      connection.onopen = () => {if (socket === connection) size()}
+      connection.onmessage = event => {
+        if (socket !== connection) return
+        lastActivity = Date.now()
+        if (typeof event.data === 'string') return
+        if (!ready) {
           term.reset()
-          received = true
+          ready = true
           waiting = 400
           status('已连接')
         }
         term.write(new Uint8Array(event.data))
       }
-      socket.onclose = event => {
-        if (disposed) return
-        if ([4400, 4404].includes(event.code)) {
+      connection.onclose = event => {
+        if (socket !== connection) return
+        socket = null
+        ready = false
+        if ([4400, 4402, 4404].includes(event.code)) {
           reconnectable = false
-          status(event.code === 4404 ? '会话已结束' : '连接失败')
+          status(event.reason || (event.code === 4404 ? '会话已结束' : '连接失败'))
           return
         }
-        received = false
-        status('连接中断 · 正在重试')
-        if (navigator.onLine) {
-          retry = setTimeout(connect, waiting)
-          waiting = Math.max(400, Math.min(waiting * 2, 5000))
-        }
+        reconnect()
         if (event.code === 1006) api('/auth').then(value => {
           if (!value.authenticated && !disposed) window.dispatchEvent(new Event('console-logout'))
         }).catch(() => {})
       }
     }
+    function checkConnection() {
+      if (!socket) return
+      if (!document.hidden && Date.now() - lastActivity > 30000) {
+        dropSocket()
+        reconnect()
+      } else if (socket.readyState === WebSocket.OPEN) {
+        socket.send('ping')
+      }
+    }
+    function offline() {
+      if (!reconnectable) return
+      clearTimeout(retry)
+      dropSocket()
+      status('网络离线 · 等待重连')
+    }
+    function online() {
+      if (reconnectable) connect()
+    }
+    function visible() {
+      if (!document.hidden) {
+        lastActivity = Date.now()
+        checkConnection()
+        if (!socket && reconnectable && navigator.onLine) connect()
+      }
+    }
     connectRef.current = {
       focus: () => term.focus(),
       selection: () => term.getSelection(),
+      isReady,
       send: value => {send(value); term.focus()},
-      paste: value => {term.paste(value); term.focus()},
+      paste: value => {if (isReady()) {term.paste(value); term.focus()}},
       retry: () => {
         reconnectable = true
-        waiting = 0
-        if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) socket.close()
-        else connect()
+        waiting = 400
+        dropSocket()
+        if (navigator.onLine) connect()
+        else offline()
       },
       font: (size, fontFamily) => {
         term.options.fontSize = size
@@ -107,17 +148,24 @@ function TerminalView({id, font, family, connectRef, status}) {
         refreshSize()
       },
     }
-    connect()
-    window.addEventListener('online', connect)
+    if (navigator.onLine) connect()
+    else offline()
+    const heartbeat = setInterval(checkConnection, 10000)
+    window.addEventListener('online', online)
+    window.addEventListener('offline', offline)
+    document.addEventListener('visibilitychange', visible)
     document.fonts?.ready.then(() => {if (!disposed) refreshSize()})
     return () => {
       disposed = true
       connectRef.current = null
-      window.removeEventListener('online', connect)
+      window.removeEventListener('online', online)
+      window.removeEventListener('offline', offline)
+      document.removeEventListener('visibilitychange', visible)
+      clearInterval(heartbeat)
       observer.disconnect()
       clearTimeout(retry)
       cancelAnimationFrame(frame)
-      socket?.close()
+      dropSocket()
       data.dispose()
       binary.dispose()
       resize.dispose()
@@ -137,6 +185,7 @@ async function copyText(value) {
   input.value = value
   input.setAttribute('readonly', '')
   input.style.cssText = 'position:fixed;left:0;top:-1000px;opacity:0.01'
+  const focused = document.activeElement
   document.body.appendChild(input)
   input.focus()
   input.select()
@@ -144,6 +193,7 @@ async function copyText(value) {
   let result = false
   try {result = document.execCommand('copy')} catch {}
   input.remove()
+  focused?.focus({preventScroll: true})
   return result
 }
 
@@ -169,7 +219,7 @@ function SessionForm({kind, mode, onClose, onCreate}) {
     } catch (e) {setError(e.message)}
     finally {setBusy(false)}
   }
-  return <Modal title={title} onClose={onClose}>
+  return <Modal title={title} onClose={() => {if (!busy) onClose()}}>
     <form className="form" onSubmit={submit}>
       <label>项目目录<input list="projects" value={cwd} required onChange={e => setCwd(e.target.value)} placeholder="/path/to/project" autoFocus/></label>
       <datalist id="projects">{projects.data?.map(path => <option key={path} value={path}/>)}</datalist>
@@ -184,7 +234,7 @@ function SessionForm({kind, mode, onClose, onCreate}) {
         {resume === 'id' && <label>Codex 会话 UUID<input value={sessionId} required onChange={e => setSessionId(e.target.value)}/></label>}
       </>}
       <ErrorNotice>{error}</ErrorNotice>
-      <div className="form-actions"><Button onClick={onClose}>取消</Button><button className="button primary" disabled={busy}>{busy ? '正在启动…' : mode === 'resume' ? '打开历史会话' : '创建会话'}</button></div>
+      <div className="form-actions"><Button onClick={onClose} disabled={busy}>取消</Button><button className="button primary" disabled={busy}>{busy ? '正在启动…' : mode === 'resume' ? '打开历史会话' : '创建会话'}</button></div>
     </form>
   </Modal>
 }
@@ -194,6 +244,7 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
   const [status, setStatus] = useState('正在连接')
   const [dialog, setDialog] = useState('')
   const [end, setEnd] = useState(null)
+  const [canForce, setCanForce] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [attachment, setAttachment] = useState('')
@@ -253,16 +304,15 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
     setBusy(true)
     setError('')
     const id = end.id
-    // Detach the terminal client first; killing a session with a live client
-    // attached can leave Zellij's server stuck.
-    close(id)
-    await new Promise(resolve => setTimeout(resolve, 150))
     try {
-      await api('/terminal/' + encodeURIComponent(id), {method: 'DELETE'})
+      await api('/terminal/' + encodeURIComponent(id) + (canForce ? '?force=true' : ''), {method: 'DELETE'})
+      close(id)
       setEnd(null)
       resource.reload()
-    } catch (e) {setError(e.message)}
-    finally {setBusy(false)}
+    } catch (e) {
+      setCanForce(e.status === 409)
+      setError(e.message)
+    } finally {setBusy(false)}
   }
   async function toggleFull() {
     if (document.fullscreenElement) return document.exitFullscreen()
@@ -282,10 +332,21 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
     setCopyNotice(await copyText(value) ? '已复制' : value ? '复制失败，请手动复制' : '请先选择终端文字')
   }
   async function paste() {
+    const target = terminal.current
     try {
       const value = await navigator.clipboard.readText()
-      terminal.current?.paste(value)
+      if (target === terminal.current && target?.isReady()) target.paste(value)
+      else {setPasteValue(value); setPasteBox(true)}
     } catch {setPasteBox(true)}
+  }
+  function submitPaste(event) {
+    event.preventDefault()
+    const target = terminal.current
+    if (!target?.isReady()) return
+    event.currentTarget.closest('dialog').close()
+    setPasteBox(false)
+    target.paste(pasteValue)
+    setPasteValue('')
   }
   function closeSessions() {
     setShowSessions(false)
@@ -296,7 +357,7 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
       {kind === 'codex' && <Button icon={History} disabled={!canCreate} onClick={() => setDialog('resume')}>恢复历史</Button>}
       <Button icon={Plus} variant="primary" disabled={!canCreate} onClick={() => setDialog('new')}>新建会话</Button>
     </PageTitle>}
-    <ErrorNotice>{error || (tools?.zellij && resource.error)}</ErrorNotice>
+    <ErrorNotice>{(!end && error) || (tools?.zellij && resource.error)}</ErrorNotice>
     {tools && !installed && <div className="notice warning">{kind === 'shell' ? '未检测到 Zellij。请安装 Zellij 0.45 或更新版本。' : '当前主机未检测到 ' + title + '。安装官方 CLI 后刷新本页。'}</div>}
     {tools && installed && !tools.zellij && <div className="notice warning">持久终端需要 Zellij 0.45 或更新版本。</div>}
     <section ref={workspace} className={'terminal-workspace' + (full ? ' full' : '')} onPasteCapture={event => {
@@ -328,7 +389,7 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
             : focusMode && canCreate && <Button icon={Plus} onClick={() => setDialog('new')}>新建会话</Button>}
         </Empty>}
       <div className="terminal-footer">
-        <span className={'connection ' + (current && status === '已连接' ? 'connected' : '')}><i/>{current ? status : '未连接'}</span>
+        <span role="status" className={'connection ' + (current && status === '已连接' ? 'connected' : '')}><i/>{current ? status : '未连接'}</span>
         {current && <><span className="terminal-cwd" title={current.cwd}>{current.cwd || current.id}</span><div className="terminal-actions">
           {copyNotice && <span role="status">{copyNotice}</span>}
           {current.managed === false && <Button title="发送 Esc，退出 Zellij 的滚动或快捷键模式"
@@ -336,13 +397,13 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
           <Button icon={Keyboard} title="终端快捷键" aria-label="终端快捷键" onClick={() => setKeys(!keys)}/>
           <Button icon={Copy} title="复制选择" aria-label="复制选择" onMouseDown={event => event.preventDefault()}
             onClick={() => copy(terminal.current?.selection())}/>
-          <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" onMouseDown={event => event.preventDefault()} onClick={paste}/>
+          <Button icon={ClipboardPaste} title="粘贴" aria-label="粘贴" disabled={status !== '已连接'} onMouseDown={event => event.preventDefault()} onClick={paste}/>
         </div></>}
       </div>
       {current && <div className={'terminal-keys' + (keys ? ' show' : '')}>{[['Esc','\x1b'], ['Tab','\t'], ['Ctrl+C','\x03'], ['Ctrl+D','\x04'], ['Ctrl+P','\x10'], ['Ctrl+N','\x0e'], ['↑','\x1b[A', ArrowUp], ['↓','\x1b[B', ArrowDown], ['←','\x1b[D'], ['→','\x1b[C'], ['Enter','\r']].map(([label, value, Icon]) =>
         <Button key={label} icon={Icon} aria-label={label} onMouseDown={e => e.preventDefault()} onClick={() => terminal.current?.send(value)}>{Icon ? '' : label}</Button>)}</div>}
       {attachment && <div className="terminal-attachment"><label>已上传<input aria-label="服务器文件路径" readOnly value={attachment} onFocus={e => e.target.select()}/></label>
-        <Button icon={Copy} aria-label="复制文件路径" onMouseDown={event => event.preventDefault()} onClick={() => copy(attachment)}/><Button disabled={!current} onClick={() => terminal.current?.paste(attachment)}>插入路径</Button><Button icon={X} aria-label="关闭文件路径" onClick={() => setAttachment('')}/>
+        <Button icon={Copy} aria-label="复制文件路径" onMouseDown={event => event.preventDefault()} onClick={() => copy(attachment)}/><Button disabled={!current || status !== '已连接'} onClick={() => terminal.current?.paste(attachment)}>插入路径</Button><Button icon={X} aria-label="关闭文件路径" onClick={() => setAttachment('')}/>
       </div>}
       {showSessions && <section id="terminal-sessions" className="card sessions" ref={sessionPanel} tabIndex={-1}
         aria-labelledby="terminal-sessions-title" onKeyDown={event => {
@@ -357,14 +418,14 @@ export default function TerminalPage({kind, font, family, hidden, setHidden, tab
             <div className="entry-text"><strong title={item.name}>{item.name}</strong>{item.cwd && <small title={item.cwd}>{item.cwd}</small>}</div>
             <div className="row-actions">
               <Button variant={current?.id === item.id ? '' : 'primary'} onClick={() => open(item)}>{current?.id === item.id ? '返回' : '连接'}</Button>
-              <Button variant="danger" onClick={() => {setError(''); setEnd(item)}}>结束</Button>
+              <Button variant="danger" onClick={() => {setError(''); setCanForce(false); setEnd(item)}}>结束</Button>
             </div>
           </div>) : <div className="empty compact">{resource.error || (resource.data ? '暂无运行中的会话' : '正在读取 Zellij 会话…')}</div>}
         </div>
       </section>}
     </section>
     {dialog && <SessionForm kind={kind} mode={dialog} onClose={() => setDialog('')} onCreate={open}/>}
-    {end && <Modal title="结束 Zellij 会话" onClose={() => setEnd(null)}><p>结束「{end.name}」将终止其中正在运行的进程。</p><ErrorNotice>{error}</ErrorNotice><div className="form-actions"><Button onClick={() => setEnd(null)}>取消</Button><Button variant="danger solid" disabled={busy} onClick={stop}>结束会话</Button></div></Modal>}
-    {pasteBox && <Modal title="粘贴到终端" onClose={() => setPasteBox(false)}><form className="form" onSubmit={event => {event.preventDefault(); setPasteBox(false); terminal.current?.paste(pasteValue); setPasteValue('')}}><textarea aria-label="粘贴内容" rows={5} placeholder="在此粘贴文字" autoFocus value={pasteValue} onChange={e => setPasteValue(e.target.value)}/><div className="form-actions"><button className="button primary">发送到终端</button></div></form></Modal>}
+    {end && <Modal title="结束 Zellij 会话" onClose={() => {if (!busy) setEnd(null)}}><p>结束「{end.name}」将终止其中正在运行的进程。</p><ErrorNotice>{error}</ErrorNotice><div className="form-actions"><Button disabled={busy} onClick={() => setEnd(null)}>取消</Button><Button variant="danger solid" disabled={busy} onClick={stop}>{busy ? '正在结束…' : canForce ? '强制结束' : '结束会话'}</Button></div></Modal>}
+    {pasteBox && <Modal title="粘贴到终端" onClose={() => setPasteBox(false)}><form className="form" onSubmit={submitPaste}><textarea aria-label="粘贴内容" rows={5} placeholder="在此粘贴文字" autoFocus value={pasteValue} onChange={e => setPasteValue(e.target.value)}/><div className="form-actions"><button className="button primary" disabled={status !== '已连接'}>发送到终端</button></div></form></Modal>}
   </div>
 }
