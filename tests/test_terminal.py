@@ -41,6 +41,28 @@ class SessionDiscoveryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(terminal.session_servers(), {"same name": (processes[0], paths[0])})
 
 
+class SessionCreationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_new_sessions_receive_terminal_type_from_headless_service(self):
+        for kind in ("shell", "codex"):
+            with (
+                self.subTest(kind=kind),
+                patch.object(terminal, "ENV", {"PATH": "/bin"}),
+                patch.object(terminal, "ai_env", return_value={"HTTPS_PROXY": "http://127.0.0.1:17890"}),
+                patch.object(terminal, "zellij", return_value=["zellij"]),
+                patch.object(terminal, "metadata", return_value={}),
+                patch.object(terminal, "save_sessions"),
+                patch.object(terminal.asyncio, "create_subprocess_exec", new=AsyncMock(
+                    return_value=SimpleNamespace(wait=AsyncMock(return_value=0)),
+                )) as launch,
+            ):
+                await terminal.create_session(kind, Path("/tmp"), "example", ["/bin/sh"])
+                env = launch.await_args.kwargs["env"]
+                self.assertEqual(env["TERM"], "xterm-256color")
+                self.assertEqual(env["COLORTERM"], "truecolor")
+                if kind == "codex":
+                    self.assertEqual(env["HTTPS_PROXY"], "http://127.0.0.1:17890")
+
+
 class SessionTerminationTests(unittest.IsolatedAsyncioTestCase):
     async def test_graceful_timeout_leaves_force_to_explicit_request(self):
         target = (Mock(), Path("/tmp/example.sock"))

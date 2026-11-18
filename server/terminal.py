@@ -25,6 +25,7 @@ router = APIRouter()
 MANAGED = re.compile(r"sc-[a-f0-9]{12}")
 LOCK = asyncio.Lock()
 STOPPING = set()
+TERMINAL_CAPABILITIES = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 ZELLIJ_CONFIG = '''
 default_layout "compact"
 default_mode "locked"
@@ -127,7 +128,8 @@ async def create_session(kind, cwd, name, command):
             try:
                 launcher = await asyncio.create_subprocess_exec(
                     *zellij(), "attach", "--create-background", session, "--", *command,
-                    cwd=cwd, env=ai_env() if kind == "codex" else ENV, stdin=asyncio.subprocess.DEVNULL, stdout=output, stderr=output,
+                    cwd=cwd, env={**(ai_env() if kind == "codex" else ENV), **TERMINAL_CAPABILITIES},
+                    stdin=asyncio.subprocess.DEVNULL, stdout=output, stderr=output,
                 )
             except OSError as error:
                 raise HTTPException(502, "无法启动 Zellij") from error
@@ -348,7 +350,7 @@ async def socket(ws: WebSocket, session: str):
         process = await asyncio.create_subprocess_exec(
             sys.executable, "-m", "server.pty_exec", *argv,
             stdin=slave, stdout=slave, stderr=slave, start_new_session=True,
-            env={**ENV, "TERM": "xterm-256color", "COLORTERM": "truecolor"},
+            env={**ENV, **TERMINAL_CAPABILITIES},
         )
         os.close(slave)
         slave = None
