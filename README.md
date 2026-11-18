@@ -1,132 +1,384 @@
 # Server Console
 
-面向个人 Mac 和 Linux 主机的浏览器工作台。一个 FastAPI 用户服务同时提供 React 前端、API 和 WebSocket。数据保存在当前用户目录，运行时使用现有的 Zellij、Docker、OpenSSH、Tailscale、Codex 和 DeepSeek Harness。
+把一台 Mac 或 Linux 服务器变成浏览器工作台。一个 FastAPI 服务同时提供 React 前端、API 和 WebSocket，登录后即可在浏览器里使用终端、Docker、SSH、网络诊断、Mihomo 代理，以及 Codex 和 DeepSeek Harness。
 
-## 从一台刚拿到的 Ubuntu 服务器开始
+- **一个服务**：`./console` 负责安装、运行、常驻和更新。
+- **普通账户即可**：默认安装到当前用户目录，不需要 root；控制台继承该账户的文件权限和工具配置。
+- **按需扩展**：基础功能只依赖 Python、Node.js 和 Zellij；Docker、Tailscale、Codex、DSH、Mihomo 都可以后装。
 
-假设你有服务器的内网 IP、Linux 用户名和 SSH 密码。下例用 `student@192.168.1.50`，请换成课题组实际分配的用户和地址。用自己的普通 Linux 账户部署，控制台中的终端和 AI 工具会沿用该账户及其项目权限。
+> **第一次使用**：从「快速开始」开始；不想手敲命令，直接跳到「交给本机 Agent 部署」。
 
-**在自己的电脑打开 PowerShell 或终端，连接服务器。**
+---
+
+## 快速开始
+
+> 前提：一台 Linux（amd64/arm64）或 macOS 服务器，能用普通账户 SSH 登录；服务器能访问 GitHub、Node.js、PyPI 和 npm（受限见「离线或受限网络」）。
+
+### 1. 连接服务器并安装
+
+在**你自己的电脑**上打开终端（Windows 用 PowerShell），把 `user@server` 换成你的账户和地址：
 
 ```bash
-ssh -L 9786:127.0.0.1:9786 student@192.168.1.50
-```
+ssh -L 9786:127.0.0.1:9786 user@server
 
-**在这次 SSH 登录里运行。**
-
-```bash
 git clone https://github.com/AaronChou313/server-console.git
 cd server-console
 ./console bootstrap
-./console password
+./console generate-password
 ./console install
 ```
 
-保持 SSH 窗口连接，在自己电脑的浏览器中打开 [http://127.0.0.1:9786](http://127.0.0.1:9786)，输入刚设置的控制台密码。它与 SSH 密码独立，支持 4–256 个字符，包括四位数字。也可运行 `./console generate-password`，首次生成的密码保存在仅当前用户可读的 `~/.config/server-console/initial-password`。改密码后执行 `./console restart` 使已有网页登录失效。
+`bootstrap` 会把 Node.js 24、Zellij 0.45.1、Python 依赖装进当前用户目录，并构建前端；`install` 安装用户级常驻服务。两者都不需要 sudo。
 
-- `bootstrap` 在 Ubuntu 22.04 及更高版本和 macOS 的 amd64 / arm64 上按需准备 Python 3.11+、Node.js 24 与 Zellij 0.45+，然后安装项目依赖并构建前端。下载使用 GitHub、Node.js、PyPI 和 npm 等上游，软件安装在当前用户目录。Ubuntu 缺少系统工具时，请有权限的人运行 `sudo apt install git curl ca-certificates`。
-- 出现 systemd 用户服务连接失败时，先用 `./console run` 前台运行。常驻部署应直接 SSH 登录目标账户，使系统创建用户服务环境。有管理员权限时可运行 `sudo loginctl enable-linger "$USER"`，让用户服务在退出 SSH 后保留，并在重启后启动。
-- 如果本机 9786 端口已被占用，将 SSH 命令中的第一个 `9786` 改为 `19786`，浏览器打开 [http://127.0.0.1:19786](http://127.0.0.1:19786)。
-- 手动准备好 Python 3.11+、Node.js 20.19+ 或 22.12+ 和 Zellij 0.45+ 的机器，可用 `./console setup` 构建。macOS 可使用相同步骤，常驻服务在部署账户登录 macOS 后启动。
+### 2. 打开控制台
 
-### 直连内网 IP
+保持 SSH 连接，在本机浏览器打开：
 
-若机房允许访问服务器的 9786/TCP，可以在服务器上执行 `./console install --host 192.168.1.50`，浏览器打开该 IP 的 9786 端口。登录后可使用当前服务器账户的 Shell。共用网段建议沿用默认的 SSH 转发，避免经明文 HTTP 传送登录和终端数据。若希望访问内网地址但浏览器仍提供增强剪贴板和全屏功能，可使用自己的 HTTPS 反向代理，传递原始 Host、可信转发协议及 WebSocket Upgrade。
+**http://127.0.0.1:9786**
 
-不同客户端网段可以共用同一个服务器 IP，只要校园网或机房路由允许这些网段访问该 IP 与端口。如果浏览器到 9786 不通但 SSH 可达，继续使用 SSH 转发。必须经跳板机登录时，在同一条命令里使用 `-J` 指定跳板机。
+首次密码保存在服务器的 `~/.config/server-console/initial-password`，可以这样查看：
 
 ```bash
-ssh -J student@bastion.lab.example -L 9786:127.0.0.1:9786 student@192.168.1.50
+cat ~/.config/server-console/initial-password
 ```
 
-服务器有多个独立网卡时，选客户端能到达的服务端接口 IP。其他网段仍可走原有 SSH 路径。如果两个网段之间既无路由也无 SSH / 跳板路径，需要由机房管理员提供访问路径。
+它与 SSH 密码独立，支持 4–256 个字符（包括四位数字）。想自己设置密码时用 `./console password`（交互式）；改密码后执行 `./console restart` 会让已有网页登录失效。
 
-Tailscale 完全可选，默认安装流程无需组网。如果已获准使用并已完成组网，可执行 `./console install --host "$(tailscale ip -4)"`，从 Tailnet 地址访问。
+部署完成后可以快速确认：
 
-### 添加网络代理和 AI 工具
+```bash
+./console status                                  # 服务应为 active/running
+curl -fsS http://127.0.0.1:9786/api/auth          # 应返回 JSON
+```
 
-基础控制台可先部署，工具可按需补装。Ubuntu 想一次准备完整工具时，将首次安装命令替换为 `./console bootstrap --with-ai --with-mihomo`。在支持 systemd 用户服务的 Linux 上，这会同时安装独立 Mihomo 用户服务。macOS 的自动安装只下载内核，已有系统代理的迁移见下文。已有可执行文件和账号配置会继续使用。
+### 3. 常见调整
 
-**Mihomo**
+- **`install` 提示无法连接 systemd 用户服务**：确认是直接 SSH 登录到目标账户（不是 `su`、容器或非登录 shell），或先用 `./console run` 前台运行。
+- **本机 9786 已被占用**：给 `install` 加 `--port 19786`，SSH 隧道同步改成 `-L 19786:127.0.0.1:19786`。
+- **希望退出 SSH 后服务继续运行**：在 Linux 上执行 `sudo loginctl enable-linger "$USER"`（需要 sudo）。没有 sudo 时，用户服务会在注销后停止。
+- **服务器是 macOS**：步骤相同，常驻服务使用 launchd，部署账户登录后自动启动。
 
-1. 若只想安装代理，运行 `./console install-mihomo`。Linux 再运行 `./console install-mihomo-service` 启用独立后台，它可以在控制台离线时保持运行。
-2. 打开「网络代理 → 配置 → 导入配置」，粘贴服务商的 Clash / Mihomo 订阅 URL。也可导入文件或粘贴 YAML。标准或 Base64 包装的 Clash 配置、常见纯节点订阅均可识别。
-3. 点「使用配置」后启动 Mihomo。在「策略与节点」先测速再选出站节点。Ubuntu 的代理默认监听 `127.0.0.1:17890`，按需在要用代理的命令中设置 `HTTPS_PROXY` 和 `HTTP_PROXY`。
-4. 若订阅下载失败，可从能访问订阅的设备下载 Clash YAML，再上传到服务器。后续在配置编辑页补上订阅链接，可直接更新。若报 HTTP 429，等服务商限流解除再试。如果配置引用 GEOIP、GEOSITE 或远程规则，内核首次校验也需要访问这些数据源。下载受限时，请使用可达的 `geox-url` 和规则源，或从官方数据发行页预置配置引用的 `country.mmdb`、`geoip.metadb`、`geoip.dat`、`geosite.dat`。Linux 独立服务的数据目录是 `~/.config/server-console/mihomo-service/`，网页直接启动的内核使用 `~/.config/server-console/mihomo/`。[官方 Geo 数据](https://github.com/MetaCubeX/meta-rules-dat/releases/tag/latest)
+### 4. 直接访问（可选）
 
-**Codex 和 DeepSeek Harness**
+默认只监听回环地址，通过 SSH 隧道访问最安全。如果服务器和客户端在同一可信内网，或已经组好 Tailscale：
+
+```bash
+# 内网直连
+./console install --host 192.168.1.50 --port 9786
+
+# Tailscale（只对 Tailnet 开放）
+./console install --host "$(tailscale ip -4)" --port 9786
+```
+
+之后浏览器打开 `http://<host>:9786`。直连模式是明文 HTTP，且控制台登录等于服务器账户的 Shell，请只在可信网络使用。需要浏览器剪贴板、全屏等增强能力时，建议套一层 HTTPS 反向代理。
+
+---
+
+## 交给本机 Agent 部署
+
+不想手动敲命令时，把下面整段复制给自己电脑上的 Agent（Claude、Codex、DSH 等），先把三个占位符换成你的连接信息。
+
+```text
+你是一名熟悉 Linux/macOS 的运维助手。请通过 SSH 连接到我的服务器，并在服务器上部署 Server Console（一个浏览器工作台）。全程使用我提供的普通账户操作，不要切换到 root，也不要修改系统级配置。
+
+连接信息：
+- 主机：<SERVER_HOST>
+- SSH 端口：<SSH_PORT>（默认 22）
+- 用户名：<SSH_USER>
+- 认证：优先使用我本机已有的 SSH 密钥/配置；如果需要密码或 sudo 密码，先问我。
+
+部署要求：
+1. 先探测环境并告诉我结果：uname -s、uname -m、/etc/os-release、python3 版本、git/curl/tar/gzip 是否可用、systemctl --user 是否可用、9786 端口是否被占用。
+2. 代码放在 $HOME/server-console。优先 git clone https://github.com/AaronChou313/server-console.git。如果服务器访问 GitHub 失败，不要卡住：在本地把项目打包（git bundle 或 tar，排除 .venv、node_modules、frontend/dist），用 scp 传到服务器解压后继续。
+3. 在代码目录执行 ./console bootstrap。只有我明确需要 AI/代理时才加 --with-ai / --with-mihomo；不确定就先问我。bootstrap 会把 Node、Zellij、uv 等装到我的用户目录，不需要 root。
+4. 如果还没有控制台密码，执行 ./console generate-password，并告诉我密码文件位置（~/.config/server-console/initial-password）。不要把密码重复打印到日志或报告里。
+5. 执行 ./console install（默认 127.0.0.1:9786，通过 SSH 隧道访问）。如果我要求直连或 Tailscale，再改用 ./console install --host <IP>。如果我的账户不能使用 systemd 用户服务，改用 ./console run 放在 tmux/nohup 中，并明确告诉我这个限制。
+6. 如果 sudo 可用（先用 sudo -n true 检测），执行 sudo loginctl enable-linger "$USER"；如果不可用，跳过并告诉我登出/重启后服务会停止。
+7. 验证：./console status；在服务器上 curl -fsS http://127.0.0.1:9786/api/auth 应返回 JSON（如果用了 --host/--port，换成对应地址和端口）；查看 ./console logs 最近几行确认没有报错。
+8. 在本机启动 SSH 隧道（后台）：ssh -N -L 9786:127.0.0.1:9786 -p <SSH_PORT> <SSH_USER>@<SERVER_HOST>，然后告诉我浏览器打开 http://127.0.0.1:9786。如果本机 9786 被占用，换一个本地端口并给出对应 URL。
+9. 最后给我一份简短报告：访问地址、密码文件位置、已安装组件（基础/AI/Mihomo）、没有完成的步骤及原因，以及后续维护命令（status/restart/logs/更新）。
+
+安全约束：
+- 不要修改防火墙、SSH 配置或系统级服务；不要使用 --host 0.0.0.0，除非我明确要求。
+- 不要把密码、token、订阅链接写进日志或聊天记录；不要执行来源不明的脚本。
+- 如果某一步需要 root 而我无法 sudo，停下来告诉我需要什么，不要尝试提权。
+```
+
+> Agent 如果无法在本机后台保持 SSH 隧道，让它把隧道命令交给你手动执行即可。直连或 Tailscale 部署时，把报告里的访问地址换成对应主机地址。
+
+---
+
+## 手动部署
+
+### 准备
+
+**服务器**：Linux amd64/arm64（常见 glibc 发行版）或 macOS；一个带家目录的普通账户；至少 `git`、`curl`、`tar`、`gzip`。缺少这些系统工具时，用系统包管理器安装（可能需要 sudo）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install -y git curl tar gzip ca-certificates
+
+# Fedora / RHEL
+sudo dnf install -y git curl tar gzip ca-certificates
+```
+
+**权限**：控制台以你的账户运行，不需要 root；sudo 只用于安装系统包和可选的 linger。
+
+**运行环境**：`bootstrap` 会自动准备 Python 3.11+、Node.js 24、Zellij 0.45+，不需要预装。它默认写入：
+
+- Node.js：`~/.local/share/server-console/node24`
+- Zellij 和用户级命令：`~/.local/bin`
+- Python：优先用系统 3.11+；否则通过 uv 安装 3.12 到 `.venv`
+
+**可选组件**：Docker、Tailscale、Codex、DeepSeek Harness、Mihomo。基础控制台不依赖它们。
+
+### 1. 获取代码
+
+```bash
+git clone https://github.com/AaronChou313/server-console.git ~/server-console
+cd ~/server-console
+```
+
+服务器访问 GitHub 失败时，在自己电脑上打包再上传：
+
+```bash
+# 本机
+git clone https://github.com/AaronChou313/server-console.git
+tar --exclude=.venv --exclude=frontend/node_modules --exclude=frontend/dist \
+  -czf server-console.tgz server-console
+scp server-console.tgz user@server:~
+
+# 服务器
+tar xzf ~/server-console.tgz && cd ~/server-console
+```
+
+也可以使用 `git bundle`：本机 `git bundle create server-console.bundle main`，上传后执行 `git clone server-console.bundle server-console`。
+
+### 2. 一键准备
+
+```bash
+./console bootstrap
+```
+
+按需追加：
+
+```bash
+# 同时安装 Codex 和 DeepSeek Harness
+./console bootstrap --with-ai
+
+# 同时安装 Mihomo；Linux 还会安装独立后台服务
+./console bootstrap --with-mihomo
+
+# 全部安装
+./console bootstrap --with-ai --with-mihomo
+```
+
+`bootstrap` 会按需下载，已有可用版本时跳过。完成后会提示执行 `./console password && ./console install`。
+
+### 3. 设置密码
+
+```bash
+# 首次：生成随机密码并写入 ~/.config/server-console/initial-password
+./console generate-password
+
+# 或自己设置（交互式输入两次）
+./console password
+```
+
+密码独立于 SSH，支持 4–256 个字符。`generate-password` 只在尚未设置密码时可用。
+
+### 4. 安装并启动
+
+```bash
+# 默认：127.0.0.1:9786，配合 SSH 隧道
+./console install
+
+# 自定义端口（本机 9786 被占用时）
+./console install --port 19786
+
+# 直接监听内网或 Tailscale 地址
+./console install --host 192.168.1.50 --port 9786
+./console install --host "$(tailscale ip -4)" --port 9786
+```
+
+查看和验证：
+
+```bash
+./console status
+curl -fsS http://127.0.0.1:9786/api/auth
+```
+
+如果暂时不想装常驻服务，或 `install` 提示 systemd 用户服务不可用：
+
+```bash
+./console run
+```
+
+需要后台运行时，把它放在 `tmux` 或 Zellij 会话里；但这不会在重启后自动恢复。
+
+Linux 上希望退出 SSH 后继续运行：
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+### 5. 离线或受限网络
+
+- **GitHub 不可达**：用上面的 tar / git bundle 方式传输代码。
+- **Node.js / Zellij 下载失败**：在能联网的机器上按 `bootstrap` 使用的地址取对应文件；Node 解压时去掉顶层目录（`tar -xzf node.tar.gz -C ~/.local/share/server-console/node24 --strip-components=1`），Zellij 放到 `~/.local/bin/zellij`，再执行 `./console setup`。
+- **PyPI / npm 慢**：配置可达的镜像后执行 `./console setup`；`bootstrap` 只准备运行时，不会修改全局镜像配置。
+- **Mihomo 内核**：`./console install-mihomo` 需要访问 GitHub；也可以先在别处下载官方可执行文件，再用 `SERVER_CONSOLE_MIHOMO` 指向它。
+
+### 6. 更新
+
+```bash
+cd ~/server-console
+git pull --ff-only
+./console setup
+./console restart
+```
+
+用 tar 包部署（没有 `.git`）时，重新上传覆盖后执行 `./console setup && ./console restart`。用户数据保留在 `~/.config/server-console/`；`frontend/dist/` 和 `.venv/` 是构建产物，不在版本控制中。
+
+---
+
+## 访问方式
+
+| 方式 | 命令 | 浏览器地址 | 适合与注意 |
+| --- | --- | --- | --- |
+| SSH 隧道（推荐） | `ssh -L 9786:127.0.0.1:9786 user@server` | `http://127.0.0.1:9786` | 不开放端口，最安全；明文 HTTP，剪贴板 API 受限 |
+| 内网直连 | `./console install --host <内网IP>` | `http://<内网IP>:9786` | 同一可信网段；需要防火墙放行 |
+| Tailscale | `./console install --host "$(tailscale ip -4)"` | `http://<Tailnet IP>:9786` | 仅 Tailnet 内可访问，无需公网端口 |
+| HTTPS 反向代理 | 由 Caddy/Nginx 转发到控制台 | `https://你的域名/` | 需要剪贴板 API、全屏等浏览器能力时使用 |
+
+**SSH 隧道补充**：
+
+- 必须经跳板机：`ssh -J user@bastion -L 9786:127.0.0.1:9786 user@server`。
+- 服务器有多个网卡：`--host` 选客户端能到达的那个地址。
+- 隧道断开后网页会断线；重新执行 SSH 命令并刷新即可，Zellij 会话仍在服务器上。
+
+**HTTPS 反向代理**：保留原始 `Host`、可信的 `X-Forwarded-Proto` 和 WebSocket `Upgrade`。反向代理与控制台同机时，默认信任来自回环代理的转发协议。
+
+Caddy 示例（自动处理 WebSocket 和转发头）：
+
+```caddy
+console.example.com {
+    reverse_proxy 127.0.0.1:9786
+}
+```
+
+---
+
+## 可选组件
+
+### AI 工具（Codex / DeepSeek Harness）
 
 ```bash
 ./console bootstrap --with-ai
 ./console restart
-export PATH="$HOME/.local/share/server-console/node24/bin:$HOME/.local/bin:$PATH"
-codex login status
 ```
 
-- Codex 需能访问账号认证和模型端点。远程主机上可在 SSH 中运行 `codex login --device-auth`，在自己电脑的浏览器完成官方登录。若账号未允许设备码认证，可按官方说明启用，或通过标准输入运行 `codex login --with-api-key`。登录后，在「AI 工作台 → Codex」选项目目录并创建会话。[Codex 认证](https://developers.openai.com/codex/auth)
-- 若本机 Mihomo 路由可达 OpenAI，可在 Web 终端中显式通过代理执行 Codex 登录与交互，例如 `HTTPS_PROXY=http://127.0.0.1:17890 HTTP_PROXY=http://127.0.0.1:17890 codex login --device-auth`。启动交互时也需要相同的代理环境。要让「AI 工作台 → Codex」的新会话继承该环境，见下方「为工具指定代理」。
-- DSH 走「AI 工作台 → DeepSeek Harness」提供的官方 Web 界面。首次使用时在自己的 DSH 设置中配置 DeepSeek 提供方和 API Key。若账号登录采用回环回调，远程浏览器打不开回调页面时，优先使用官方 Web 中的 API Key 方式。DSH 和 Codex 都使用当前服务器账户自己的凭据及会话。[DSH 官方 CLI 参考](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md)
-- Docker 可选。控制台沿用部署账户已能访问的 Docker Engine。先用 `docker ps` 测试访问权，再使用 Docker 页面。实验室主机请沿用已部署的 Engine，或向管理员申请符合机房政策的访问方式。[Docker rootless 指南](https://docs.docker.com/engine/security/rootless/)
+安装后打开「AI 工作台」即可使用。Codex 需要访问账号认证和模型端点：
 
-### 为工具指定代理
+```bash
+export PATH="$HOME/.local/share/server-console/node24/bin:$HOME/.local/bin:$PATH"
+codex login status
+codex login --device-auth
+```
 
-若希望由工作台新拉起的工具进程使用本机 Mihomo，请在 SSH 中设置以下变量，再用原来的监听参数重新执行 `install`。以下是默认回环监听，若之前使用了 `--host` 或 `--port`，请在此追加它们。
+- `--device-auth` 适合远程/无头服务器，不需要浏览器回调；按提示在自己的电脑上打开链接、输入代码。
+- 如果账号未启用设备码认证，可用 `codex login --with-api-key` 从标准输入提供 API Key。
+- 需要代理时，在终端里显式设置 `HTTPS_PROXY` / `HTTP_PROXY`，或使用下面的 `SERVER_CONSOLE_TOOL_PROXY`。
+
+DSH 使用「DeepSeek Harness」页面提供的官方 Web 界面。首次使用在自己的 DSH 设置里配置 DeepSeek 提供方和 API Key。若账号登录使用回环回调、远程浏览器无法完成回调，可改用 DSH 设置里的 API Key/提供方配置，或先在能访问回调的本机完成登录。
+
+### 为新建工具指定代理
+
+如果希望工作台新建的 Codex / DSH 进程自动继承本机 Mihomo：
 
 ```bash
 SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 ```
 
-该设置供工作台新建的 Codex 和 DSH 进程使用，其他已有终端会话保持原来的环境。使用独立 Mihomo 服务时，可先在「网络代理」确认代理端口和运行状态。
+它只影响之后新启动的工具进程，已有终端会话不受影响。先确认「网络代理」里的代理端口和运行状态。
 
-## 日常操作
+### Mihomo 网络代理
+
+```bash
+# 只安装内核
+./console install-mihomo
+
+# Linux：再安装可脱离控制台运行的独立后台
+./console install-mihomo-service
+
+# 或一步完成（Linux 会同时安装后台）
+./console bootstrap --with-mihomo
+```
+
+- 代理默认监听 `127.0.0.1:17890`（HTTP / SOCKS5），独立后台通过私有 Unix socket 管理。
+- 打开「网络代理 → 配置 → 导入配置」，可导入 Clash / Mihomo YAML、订阅链接、Base64 节点列表或常见纯节点订阅；转换后由 Mihomo 校验。
+- 订阅返回 HTTP 429 时是服务商限流，等一段时间或更换订阅链接，不要连续重试。
+- 配置引用 GEOIP / GEOSITE / 远程规则时，首次校验需要对应数据。无法访问 GitHub 时，预置 `country.mmdb`、`geoip.metadb`、`geosite.dat`，或改用可达的 `geox-url`。
+- Linux 独立服务的数据目录是 `~/.config/server-console/mihomo-service/`，网页直接启动的内核使用 `~/.config/server-console/mihomo/`。
+
+### Docker / Tailscale
+
+- **Docker**：控制台沿用部署账户已能访问的 Docker Engine。先用 `docker ps` 验证权限，再使用 Docker 页面。不要为了省事把账户加入 docker 组或改用 root，除非你清楚这等同于高权限。
+- **Tailscale**：可选。装好并登录后，用 `./console install --host "$(tailscale ip -4)"` 只对 Tailnet 开放。
+
+---
+
+## 功能
 
 | 模块 | 操作 |
 | --- | --- |
 | 概览 | 查看 CPU、内存、用户磁盘卷、网络速率与运行时间。每 3 秒采样，趋势保留在当前浏览器内存中。 |
 | 我的应用 | 自动发现本机监听并返回 HTML 的 Web 服务；点击直接打开，回环地址服务经控制台临时转发。 |
-| 终端 | 新建项目 Shell，或在工具栏展开「会话」连接已有的 Zellij 会话。浏览器标签关闭、刷新和 WebSocket 重连都会保留服务器进程。用「结束」明确停止。 |
-| Docker | 查看 Engine 状态、容器、CPU 和内存，启动、停止、重启、查看末尾日志或进入容器。容器中需要可用的 `/bin/bash` 或 `/bin/sh`。 |
-| SSH | 系统 OpenSSH 发起连接。主配置的独立 `Host` 条目可编辑，`Include` 或多别名配置可以查看和连接。保存前在 `~/.ssh/config.server-console.bak` 留一份备份。认证使用现有密钥和系统代理。 |
-| 网络 | 查看网络接口、当前用户权限下可读取的连接、Tailscale Peer 和链路信息。支持 Ping、TCP、Tailscale Ping 和 Netcheck。 |
-| 网络代理 | 管理本机 Mihomo 内核、配置和订阅，切换策略组节点、测试延迟，查看规则、连接和日志。 |
-| AI 工作台 | 在终端使用原生 Codex CLI，在 DeepSeek Harness 页面使用官方 Web 界面。 |
+| 终端 | 新建项目 Shell，或连接已有的 Zellij 会话。浏览器关闭、刷新和 WebSocket 重连都会保留服务器进程。 |
+| Docker | 查看 Engine、容器、CPU 和内存，启动、停止、重启、查看日志或进入容器。 |
+| SSH | 用系统 OpenSSH 发起连接。保存前在 `~/.ssh/config.server-console.bak` 留备份。 |
+| 网络 | 查看接口、连接、Tailscale Peer 和链路；支持 Ping、TCP、Tailscale Ping、Netcheck。 |
+| 网络代理 | 管理 Mihomo 内核、配置、订阅、节点测速、规则、连接和日志。 |
+| AI 工作台 | 在终端使用 Codex CLI，在 DSH 页面使用 DeepSeek Harness 官方 Web 界面。 |
 | 设置 | 在当前浏览器保存亮暗主题、终端字体与字号。 |
 
 ### 终端和 Codex
 
-- 从终端工具栏打开「运行中的会话」并点击「连接」，即可附着到原来的 Zellij 会话。内部状态、当前审批提示和 Shell 环境由原进程持有。主机重启会终止这些进程。
-- 「恢复历史」新建一个 Zellij 容器会话，再使用官方 `codex resume`。提供项目内历史选择、所有项目历史、最近会话及 UUID。它读取当前服务器用户的 Codex 历史。
-- 新建的 Zellij 会话默认使用 Locked 模式，尽量把按键留给内部程序。需要 Zellij 本身的快捷键时，按 `Ctrl+g` 切换。点击全屏或隐藏侧栏可以增大终端面积。
-- 连接主机上已有的 Zellij 会话后，如果进入了滚动模式，可按 `Esc` 或点击底部的「恢复输入」。
-- 在桌面用浏览器的粘贴、`Ctrl+Shift+C` 或终端工具栏复制、粘贴。手机上点终端呼出键盘，底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 按键。不同浏览器和 TUI 的选区行为有差异，鼠标模式下可尝试按住 Shift 拖选。
-- 用上传按钮发送附件，或在终端里直接粘贴浏览器能够读到的图片。上传完成后可以复制或插入服务器路径。单文件限 25 MiB，文件保存在 `~/.config/server-console/uploads/`，由该用户自行清理。
+- 终端由 Zellij 承载。浏览器标签关闭或刷新不会终止服务器上的进程；用「结束」明确停止。
+- 「运行中的会话」可附着到原会话；「恢复历史」新建 Zellij 容器会话后调用 `codex resume`。
+- 新会话默认使用 Zellij 的 Locked 模式；需要 Zellij 快捷键时按 `Ctrl+g`。
+- 复制用终端工具栏；TUI 开启鼠标模式时先按住 `Shift` 拖选。手机底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 键。
+- 单文件上传上限 25 MiB，保存在 `~/.config/server-console/uploads/`。
 
 ### 我的应用
 
-- 扫描主机上监听的 TCP 端口，只列出返回 HTML 的 HTTP 服务。页面每 30 秒自动刷新，也可以手动「重新扫描」。
-- 对外监听的服务标记为「可直连」，通过该服务实际监听的地址打开。
-- 控制台通过内网 IP 访问时，可为主机本机应用在该接口上临时开端口，10 分钟无活动后关闭。临时端口沿用应用自身的登录机制。控制台通过 SSH 隧道访问时，可点击「主机本机」应用查看独立的 SSH 转发命令。
-- Server Console 自身和由控制台启动的 DSH Web 不会重复列出。
+- 扫描本机监听的 TCP 端口，只列出返回 HTML 的 HTTP 服务；每 30 秒刷新，也可手动扫描。
+- 对外监听的服务显示「可直连」，用实际监听地址打开。
+- 控制台通过内网 IP 访问时，回环服务会临时开端口并原样转发，10 分钟无活动后关闭；临时端口沿用服务自身的登录机制。
+- 控制台通过 SSH 隧道访问时，回环服务会显示一条独立的 `ssh -N -L` 转发命令。
+- Server Console 自身和由它启动的 DSH 不会重复列出。
 
 ### DeepSeek Harness
 
-打开 DeepSeek Harness 页面会自动启动 `dsh web`。Server Console 在主机回环地址启动官方进程，并通过已登录的 `/dsh/` 代理转发 HTTP 和实时消息。使用「新标签页打开」可在独立浏览器标签访问同一个官方页面。DSH 需要支持 `--public-url` 和 `--trusted-host` 的版本。
-
-工具默认从服务的 PATH 查找。在 macOS 上也识别 `/Applications/DeepSeek Harness.app` 随附的 DSH CLI。前台运行可用 `SERVER_CONSOLE_DSH` 等同名环境变量指定可执行文件路径。
+打开页面会自动启动 `dsh web`，通过已登录的 `/dsh/` 代理转发 HTTP 和实时消息。DSH 需要支持 `--public-url` 和 `--trusted-host` 的版本；工具默认从服务 PATH 查找，在 macOS 上也识别 `/Applications/DeepSeek Harness.app` 随附的 CLI。
 
 ### Mihomo
 
-打开「网络代理」可安装、更新、启动、停止和重启 Mihomo。也支持服务 PATH 中的 [官方 Mihomo 可执行文件](https://github.com/MetaCubeX/mihomo/releases)，可用 `SERVER_CONSOLE_MIHOMO` 指定路径。内核下载安装需要服务器能够访问 GitHub。
+打开「网络代理」可安装、更新、启动、停止和重启 Mihomo，导入多个 Clash / Mihomo YAML 或订阅，编辑、导出、更新和切换配置；在「策略与节点」切换节点和测速，「连接」「路由规则」「日志」用于排查。每台设备独立保存配置。
 
-在「配置」页可导入多个 Clash / Mihomo YAML 文件或订阅链接，编辑、导出、更新和切换配置。导入会先由 Mihomo 校验，可以在任意配置上点击「使用配置」。在「策略与节点」可切换规则、全局和直连模式，选择节点、恢复自动组，并执行单节点、组内或批量测速。「连接」页支持断开单条或全部连接，「路由规则」和「日志」可用于排查。每台设备独立保存配置，文件位于 Server Console 状态目录下的 `mihomo/`。
+Linux 独立后台可以在控制台离线时继续运行；无需启动网页时也可直接使用：
 
-独立后台通过私有 Unix socket 接受管理命令，Server Console 网页服务停止时后台继续运行。
+```bash
+./console mihomo status|start|stop|restart|rules|logs
+```
 
-- Linux 可在部署账户下执行 `./console install-mihomo-service`，安装并启用 `server-console-mihomo.service`。独立内核默认提供本机 `127.0.0.1:17890` 的 HTTP / SOCKS5 代理。
-- 从 Mac 上已有的 Open Remote Hub 代理迁移时，由当前管理员执行 `sudo /usr/bin/python3 -I "$PWD/scripts/migrate_mihomo_macos.py"`。该命令复制现有配置，保留原代理端口和 TUN 状态，并切换到独立的 `local.server-console.mihomo` 系统服务。新服务校验失败时会尝试恢复旧服务。
-- 无需启动网页，可以在部署账户下运行 `./console mihomo status`、`start`、`stop`、`restart`、`rules` 或 `logs`。
+从 Mac 上已有的 Open Remote Hub 代理迁移时，由管理员执行：
 
-## 常驻服务
+```bash
+sudo /usr/bin/python3 -I "$PWD/scripts/migrate_mihomo_macos.py"
+```
+
+### 常驻服务
 
 ```bash
 ./console status
@@ -136,11 +388,51 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 ./console restart
 ```
 
-macOS 使用 `~/Library/LaunchAgents/local.server-console.plist`，在用户登录后启动。Linux 使用 `~/.config/systemd/user/server-console.service`。若 Linux 主机应在用户登出后保持服务，启用该用户的 systemd linger。服务停止和浏览器断开只结束控制台的附着客户端，Zellij 保留现有工作。Server Console 重启后重新登录即可接回已有的 Zellij 会话。DSH Web 服务随 Server Console 停止，DSH 自身历史存放在原来的用户目录。
+- macOS：`~/Library/LaunchAgents/local.server-console.plist`，登录后启动。
+- Linux：`~/.config/systemd/user/server-console.service`，可配合 linger 在退出登录后保持。
+- 停止控制台或断开浏览器只结束附着客户端，Zellij 会保留现有工作；DSH 随控制台停止，但历史保留在用户目录。
 
-## 更新
+---
 
-在原仓库和同一账户下运行 `git pull --ff-only && ./console setup && ./console restart`。控制台数据保留在 `~/.config/server-console/`。使用前台运行时，退出旧进程后重新执行 `./console run`。
+## 安全建议
+
+- **控制台密码等于部署账户的 Shell 权限**。用普通账户部署，不要用 root；如果必须用 root，请设置强密码并限制访问网络。
+- **默认只监听回环地址**，通过 SSH 隧道访问。需要直连时，只绑定可信内网或 Tailscale 地址，不要用 `0.0.0.0` 暴露到公网。
+- **明文 HTTP 下浏览器 Clipboard API 不可用**，终端工具栏会退回兼容模式。需要完整剪贴板/全屏能力时，用 HTTPS 反向代理。
+- **我的应用**的临时转发没有额外登录校验，仅在同一网络内可用，闲置 10 分钟关闭；不要在不可信网络开启。
+- 上传文件由部署账户可读，定期清理 `~/.config/server-console/uploads/`。
+
+---
+
+## 常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| `install` 报无法连接 systemd 用户服务 | 直接 SSH 登录目标账户后重试；或先 `./console run` |
+| 退出 SSH 后网页打不开 | 执行 `sudo loginctl enable-linger "$USER"`；没有 sudo 时只能保持登录或用 tmux |
+| 本机 9786 被占用 | `./console install --port 19786`，SSH 隧道改成 `-L 19786:127.0.0.1:19786` |
+| `git clone` 失败 | 本机打包 tar 或 `git bundle` 后 `scp` 上传；见「获取代码」 |
+| 缺少 `curl` / `tar` / `gzip` | 用系统包管理器安装；`bootstrap` 不会自动装系统包 |
+| 订阅下载失败或 HTTP 429 | 服务商限流或网络受限；换网络/等限流解除，或从能访问订阅的设备下载 YAML 后粘贴导入 |
+| Mihomo 校验失败，配置有 GEOIP/GEOSITE 或 DNS fallback geoip | 首次校验需要 Geo 数据；预置 `country.mmdb`、`geoip.metadb`、`geosite.dat` 或改用可达的 `geox-url` |
+| Codex 登录失败 | 用 `codex login --device-auth`；需要代理时先设置 `HTTPS_PROXY` / `HTTP_PROXY` |
+| DSH 登录弹窗一闪而过 | DSH 账号登录使用回环回调，远程浏览器无法完成；优先在 DSH 设置里配置 API Key/提供方，或在能访问回调的本机完成登录 |
+| `./console logs` 没有输出 | 确认 `systemctl --user` 可用；root 部署且无独立 user journal 时可用 `journalctl _SYSTEMD_USER_UNIT=server-console.service -n 80 -f` |
+| 终端复制不了 | 先用工具栏「复制选择」；鼠标模式下按住 Shift 拖选；长期方案是 HTTPS |
+
+---
+
+## 项目结构
+
+```text
+console              # 命令行入口：bootstrap/password/install/run/logs...
+server/              # FastAPI 后端（host/terminal/docker/ssh/apps/mihomo/dsh）
+frontend/            # React + Vite 前端
+scripts/             # bootstrap.sh、Mihomo daemon、macOS 迁移脚本
+tests/               # 单元测试
+```
+
+---
 
 ## 开发
 
@@ -148,14 +440,27 @@ macOS 使用 `~/Library/LaunchAgents/local.server-console.plist`，在用户登�
 ./console setup
 ./console password
 ./console run --reload
+
 # 另开一个终端
 npm run dev --prefix frontend
 ```
 
-打开 Vite 打印的本地地址。开发代理会转发 API、终端 WebSocket 和 DSH 请求。发布前运行 `npm run build --prefix frontend`，后端会直接提供 `frontend/dist/`。后端使用单个 worker，以便认证状态与 DSH 进程在同一个服务实例中维护。
+打开 Vite 打印的本地地址。开发代理会转发 API、终端 WebSocket 和 DSH 请求。发布前执行 `npm run build --prefix frontend`，后端会直接提供 `frontend/dist/`。后端使用单个 worker，以保持认证状态和 DSH 进程在同一个服务实例中。
+
+运行订阅解析测试：
+
+```bash
+.venv/bin/python -m unittest tests.test_subscriptions
+```
+
+---
 
 ## 上游文档
 
 - [Zellij CLI](https://zellij.dev/documentation/commands)
 - [DeepSeek Harness CLI 参考](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md)
 - [Codex CLI](https://developers.openai.com/codex/cli/)
+- [Codex 认证](https://developers.openai.com/codex/auth)
+- [Mihomo](https://github.com/MetaCubeX/mihomo)
+- [MetaCubeX Geo 数据](https://github.com/MetaCubeX/meta-rules-dat/releases/tag/latest)
+- [Docker rootless](https://docs.docker.com/engine/security/rootless/)
