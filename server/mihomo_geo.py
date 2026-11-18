@@ -9,7 +9,10 @@ import httpx
 from fastapi import HTTPException
 
 RELEASE = "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/"
-CDN = "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/"
+CDNS = (
+    "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/",
+    "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/",
+)
 ASSETS = {"mmdb": "geoip.metadb", "geoip": "geoip.dat",
           "geosite": "geosite.dat", "asn": "GeoLite2-ASN.mmdb"}
 MMDB_ALIASES = ("country.mmdb", "geoip.db")
@@ -54,7 +57,7 @@ def asset_urls(source, kind):
     if mirror := os.getenv("SERVER_CONSOLE_GEO_MIRROR"):
         return [mirror.rstrip("/") + "/" + name]
     prefix = os.getenv("SERVER_CONSOLE_GITHUB_MIRROR", "")
-    return [github_url(RELEASE + name, prefix), CDN + name]
+    return [github_url(RELEASE + name, prefix), *(base + name for base in CDNS)]
 
 
 def github_url(url, prefix):
@@ -68,9 +71,8 @@ def ready(path):
 async def download_asset(client, urls, target):
     for url in urls:
         try:
-            async with asyncio.timeout(30), client.stream("GET", url) as response:
-                response.raise_for_status()
-                if "text/html" in response.headers.get("content-type", "").lower():
+            async with asyncio.timeout(180), client.stream("GET", url) as response:
+                if response.status_code != 200 or "text/html" in response.headers.get("content-type", "").lower():
                     continue
                 with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as file:
                     temp = target.with_name(os.path.basename(file.name))
