@@ -576,6 +576,9 @@ def convert_nodes(text):
             decoded = _b64(text)
         except (ValueError, binascii.Error, UnicodeError):
             return None
+        # Some providers Base64-wrap an entire Clash profile.
+        if re.search(r"(?m)^\s*(?:proxies|proxy-groups|rules|mixed-port)\s*:", decoded):
+            return decoded
     proxies = []
     for line in decoded.splitlines():
         line = line.strip()
@@ -622,7 +625,7 @@ def node_list(text):
         decoded = raw.decode("utf-8")
     except (binascii.Error, ValueError, UnicodeDecodeError):
         return False
-    return bool(re.search(r"(?:^|\n)\s*(?:ss|ssr|vmess|vless|trojan|hysteria2?|tuic)://", decoded))
+    return bool(LINK.search(decoded) or re.search(r"(?m)^\s*(?:proxies|proxy-groups|rules|mixed-port)\s*:", decoded))
 
 
 async def checked(text, identity):
