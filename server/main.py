@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import docker, dsh, host, ssh, terminal
+from . import docker, dsh, host, mihomo, ssh, terminal
 from .runtime import ROOT, STATE, binary, config, private_dir, verify_password
 
 COOKIE = "sc_session"
@@ -30,8 +30,9 @@ def same_origin(connection):
 
 @asynccontextmanager
 async def lifespan(_):
+    await mihomo.restore()
     yield
-    await dsh.stop()
+    await asyncio.gather(dsh.stop(), mihomo.stop())
 
 
 app = FastAPI(title="Server Console", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -66,7 +67,7 @@ class WebAccess:
 
 
 app.add_middleware(WebAccess)
-for module in [host, terminal, docker, ssh, dsh]:
+for module in [host, terminal, docker, ssh, dsh, mihomo]:
     app.include_router(module.router)
 
 
@@ -115,7 +116,7 @@ def logout(request: Request):
 
 @app.get("/api/tools")
 def tools():
-    return {name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale")}
+    return {name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale", "mihomo")}
 
 
 @app.post("/api/uploads")

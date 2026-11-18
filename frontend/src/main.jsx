@@ -1,10 +1,11 @@
 import React, {lazy, Suspense, useEffect, useState} from 'react'
 import {createRoot} from 'react-dom/client'
-import {ArrowRight, Box, ChevronDown, Command, LayoutDashboard, LogOut, Menu, Monitor, Moon, Network, Server, Settings, Sparkles, SquareTerminal, Sun, KeyRound, X} from 'lucide-react'
+import {ArrowRight, Box, Cable, ChevronDown, Command, LayoutDashboard, LogOut, Menu, Monitor, Moon, Network, Server, Settings, Sparkles, SquareTerminal, Sun, KeyRound, X} from 'lucide-react'
 import {api, useResource} from './api'
 import {Badge, Button, CardTitle, ErrorNotice, Loading, Modal, PageTitle} from './ui'
 import Overview from './Overview'
 import DshPage from './DshPage'
+import ProxyPage from './ProxyPage'
 import {DockerPage, NetworkPage, SSHPage} from './Management'
 import './style.css'
 
@@ -16,6 +17,7 @@ const pages = {
   docker: [Box, 'Docker'],
   ssh: [KeyRound, 'SSH'],
   network: [Network, '网络'],
+  proxy: [Cable, '网络代理'],
   codex: [Command, 'Codex'],
   dsh: [Sparkles, 'DeepSeek Harness'],
   settings: [Settings, '设置'],
@@ -124,7 +126,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
       <div className="sidebar-brand"><Brand/><Button icon={X} className="mobile-only" aria-label="关闭导航" onClick={() => setMobileNav(false)}/></div>
       <nav className="navigation" aria-label="主导航">
         <div className="nav-label">工作区</div>
-        {['overview', 'terminal', 'docker', 'ssh', 'network'].map(navLink)}
+        {['overview', 'terminal', 'docker', 'ssh', 'network', 'proxy'].map(navLink)}
         <div className="nav-rule"/>
         <button className={'nav-link ai-group' + (isAI(page) ? ' ai-active' : '')} aria-expanded={aiOpen} onClick={() => setAiOpen(!aiOpen)}>
           <Sparkles size={17} strokeWidth={1.75}/><span>AI 工作台</span><ChevronDown className={aiOpen ? '' : 'closed'} size={14}/>
@@ -158,6 +160,7 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
       {page === 'docker' && <DockerPage openTerminal={openTerminal}/>}
       {page === 'ssh' && <SSHPage openTerminal={openTerminal}/>}
       {page === 'network' && <NetworkPage/>}
+      {page === 'proxy' && <ProxyPage/>}
       {page === 'settings' && <SettingsPage {...{theme, setTheme, font, setFont, fontFamily, setFontFamily, tools: tools.data}}/>}
     </main>
     {loggingOut && <Modal title="退出登录" onClose={() => setLoggingOut(false)}><p>Zellij 会话会继续在主机上运行。</p><ErrorNotice>{logoutError}</ErrorNotice><div className="form-actions"><Button onClick={() => setLoggingOut(false)}>取消</Button><Button variant="primary" onClick={logout}>退出登录</Button></div></Modal>}

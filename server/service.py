@@ -40,7 +40,7 @@ def main():
         "PATH": PATH, "SERVER_CONSOLE_STATE": str(STATE), "SERVER_CONSOLE_HOST": args.host,
         "SERVER_CONSOLE_PORT": str(args.port),
     }
-    overrides = ["SERVER_CONSOLE_" + tool for tool in ("CODEX", "DSH", "DOCKER", "TAILSCALE", "ZELLIJ", "SSH")]
+    overrides = ["SERVER_CONSOLE_" + tool for tool in ("CODEX", "DSH", "DOCKER", "TAILSCALE", "ZELLIJ", "SSH", "MIHOMO")]
     for name in ("CODEX_HOME", "DOCKER_HOST", "DOCKER_CONTEXT", *overrides):
         if name in os.environ:
             values[name] = os.environ[name]
@@ -61,7 +61,7 @@ After=network-online.target
 
 [Service]
 ExecStart={systemd_quote(str(ROOT / "console"))} run
-WorkingDirectory={systemd_quote(str(ROOT))}
+WorkingDirectory={str(ROOT).replace("%", "%%")}
 {env}
 Restart=on-failure
 RestartSec=5
