@@ -4,6 +4,7 @@ import binascii
 import gzip
 import hashlib
 import json
+import json
 import os
 import platform
 import re
@@ -11,7 +12,7 @@ import socket
 import time
 import uuid
 from typing import Literal
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 import yaml
@@ -310,11 +311,11 @@ def local_proxy():
         return None
 
 
-async def fetch(url, proxy):
+async def fetch(url, proxy, ua="mihomo"):
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15, connect=8), follow_redirects=True,
                                      proxy=proxy, trust_env=False,
-                                     headers={"User-Agent":"mihomo"}) as client:
+                                     headers={"User-Agent": ua}) as client:
             async with client.stream("GET", url) as response:
                 if response.status_code >= 400:
                     raise HTTPException(502, f"订阅地址返回 HTTP {response.status_code}")
@@ -340,8 +341,9 @@ async def fetch(url, proxy):
 
 
 async def download(url):
+    proxy = None
     try:
-        return await fetch(url, None)
+        text, usage = await fetch(url, None)
     except HTTPException as direct:
         # Only transport failures are worth retrying; an HTTP status is definitive.
         if direct.status_code == 413 or str(direct.detail).startswith("订阅地址返回 HTTP"):
@@ -351,12 +353,267 @@ async def download(url):
         if not proxy:
             raise
         try:
-            return await fetch(url, proxy)
+            text, usage = await fetch(url, proxy)
         except HTTPException as proxied:
             raise HTTPException(502, f"直连失败（{direct.detail}），经本机代理仍失败（{proxied.detail}）") from None
+    # Some providers only return Clash YAML for recognized clients; otherwise we convert Base64 below.
+    if node_list(text):
+        try:
+            alternate, alternate_usage = await fetch(url, proxy, ua="clash-verge/v1.7.7")
+        except HTTPException:
+            alternate = ""
+        if alternate and not node_list(alternate):
+            return alternate, alternate_usage
+    return text, usage
+
+
+def _b64(value):
+    raw = value.strip().replace("-", "+").replace("_", "/")
+    return base64.b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8", "replace")
+
+
+def _query(parsed):
+    return {key: values[-1] for key, values in parse_qs(parsed.query).items()}
+
+
+def _label(parsed, fallback):
+    return unquote(parsed.fragment).strip() or fallback
+
+
+def _parse_ss(link):
+    parsed = urlsplit(link)
+    if parsed.hostname:
+        host, port = parsed.hostname, parsed.port
+        try:
+            credential = _b64(parsed.username or "")
+        except (ValueError, binascii.Error):
+            credential = unquote(parsed.username or "")
+        method, _, password = credential.partition(":")
+        plugin = _query(parsed).get("plugin", "")
+    else:
+        # Legacy ss://BASE64(method:password@host:port)#name
+        raw = _b64(parsed.netloc)
+        credential, _, endpoint = raw.rpartition("@")
+        method, _, password = credential.partition(":")
+        host, _, port = endpoint.rpartition(":")
+        port = int(port) if port.isdigit() else 0
+        plugin = ""
+    if not (host and port and method):
+        return None
+    proxy = {"name": _label(parsed, f"{host}:{port}"), "type": "ss", "server": host, "port": port,
+             "cipher": method, "password": password, "udp": True}
+    if plugin:
+        parts = plugin.split(";")
+        kind, options = parts[0].split("=")[0], dict(part.split("=", 1) for part in parts[1:] if "=" in part)
+        if kind in ("obfs-local", "simple-obfs", "obfs"):
+            proxy["plugin"] = "obfs"
+            proxy["plugin-opts"] = {"mode": options.get("obfs", "http")}
+            if options.get("obfs-host"):
+                proxy["plugin-opts"]["host"] = options["obfs-host"]
+        elif kind == "v2ray-plugin":
+            proxy["plugin"] = "v2ray-plugin"
+            proxy["plugin-opts"] = {"mode": "websocket", "tls": options.get("tls") in ("1", "true")}
+            if options.get("host"):
+                proxy["plugin-opts"]["host"] = options["host"]
+            if options.get("path"):
+                proxy["plugin-opts"]["path"] = options["path"]
+        else:
+            return None
+    return proxy
+
+
+def _parse_vmess(link):
+    data = json.loads(_b64(link[8:]))
+    if not isinstance(data, dict):
+        return None
+    server, uuid = str(data.get("add") or "").strip(), str(data.get("id") or "").strip()
+    try:
+        port = int(data.get("port") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not (server and uuid and 0 < port < 65536):
+        return None
+    proxy = {"name": str(data.get("ps") or server).strip(), "type": "vmess", "server": server, "port": port,
+             "uuid": uuid, "alterId": int(data.get("aid") or 0), "cipher": str(data.get("scy") or "auto"), "udp": True}
+    host = str(data.get("host") or "").strip()
+    sni = str(data.get("sni") or "").strip() or (host if host and not host.startswith("*") else "")
+    if str(data.get("tls") or "").lower() in ("tls", "true", "1"):
+        proxy["tls"] = True
+        if sni:
+            proxy["servername"] = sni
+    network, path = str(data.get("net") or "tcp").lower(), str(data.get("path") or "").strip()
+    if network == "ws":
+        proxy["network"] = "ws"
+        options = {}
+        if path:
+            options["path"] = path
+        if host:
+            options["headers"] = {"Host": host}
+        if options:
+            proxy["ws-opts"] = options
+    elif network == "grpc":
+        proxy["network"] = "grpc"
+        if path:
+            proxy["grpc-opts"] = {"grpc-service-name": path}
+    elif network in ("h2", "http"):
+        proxy["network"] = network
+        options = {}
+        if path:
+            options["path"] = path
+        if host:
+            options["host"] = [host]
+        if options:
+            proxy["h2-opts"] = options
+    return proxy
+
+
+def _parse_trojan(link):
+    parsed = urlsplit(link)
+    password, host, port = unquote(parsed.username or ""), parsed.hostname, parsed.port
+    if not (password and host and port):
+        return None
+    query = _query(parsed)
+    proxy = {"name": _label(parsed, host), "type": "trojan", "server": host, "port": port, "password": password,
+             "udp": True, "skip-cert-verify": query.get("allowInsecure", "0") in ("1", "true")}
+    sni = query.get("sni") or query.get("peer")
+    if sni:
+        proxy["sni"] = sni
+    network = query.get("type", "tcp").lower()
+    if network == "ws":
+        proxy["network"] = "ws"
+        options = {}
+        if query.get("path"):
+            options["path"] = query["path"]
+        if query.get("host"):
+            options["headers"] = {"Host": query["host"]}
+        if options:
+            proxy["ws-opts"] = options
+    elif network == "grpc":
+        proxy["network"] = "grpc"
+        proxy["grpc-opts"] = {"grpc-service-name": query.get("serviceName") or query.get("path", "")}
+    return proxy
+
+
+def _parse_vless(link):
+    parsed = urlsplit(link)
+    uuid, host, port = unquote(parsed.username or ""), parsed.hostname, parsed.port
+    if not (uuid and host and port):
+        return None
+    query = _query(parsed)
+    proxy = {"name": _label(parsed, host), "type": "vless", "server": host, "port": port, "uuid": uuid, "udp": True,
+             "skip-cert-verify": query.get("allowInsecure", "0") in ("1", "true")}
+    security = query.get("security", "none").lower()
+    if security in ("tls", "reality"):
+        proxy["tls"] = True
+        sni = query.get("sni") or query.get("peer")
+        if sni:
+            proxy["servername"] = sni
+        if query.get("fp"):
+            proxy["client-fingerprint"] = query["fp"]
+    if security == "reality":
+        if not query.get("pbk"):
+            return None
+        proxy["reality-opts"] = {"public-key": query["pbk"], "short-id": query.get("sid", "")}
+    network = query.get("type", "tcp").lower()
+    if network == "ws":
+        proxy["network"] = "ws"
+        options = {}
+        if query.get("path"):
+            options["path"] = query["path"]
+        if query.get("host"):
+            options["headers"] = {"Host": query["host"]}
+        if options:
+            proxy["ws-opts"] = options
+    elif network == "grpc":
+        proxy["network"] = "grpc"
+        proxy["grpc-opts"] = {"grpc-service-name": query.get("serviceName", "")}
+    return proxy
+
+
+def _parse_hy2(link):
+    parsed = urlsplit(link)
+    password, host, port = unquote(parsed.username or ""), parsed.hostname, parsed.port
+    if not (password and host and port):
+        return None
+    query = _query(parsed)
+    proxy = {"name": _label(parsed, host), "type": "hysteria2", "server": host, "port": port, "password": password,
+             "skip-cert-verify": query.get("insecure", "0") in ("1", "true")}
+    sni = query.get("sni") or query.get("peer")
+    if sni:
+        proxy["sni"] = sni
+    if query.get("obfs"):
+        proxy["obfs"] = query["obfs"]
+        proxy["obfs-password"] = query.get("obfs-password", "")
+    return proxy
+
+
+def _parse_tuic(link):
+    parsed = urlsplit(link)
+    uuid, password = unquote(parsed.username or ""), unquote(parsed.password or "")
+    host, port = parsed.hostname, parsed.port
+    if not (uuid and host and port):
+        return None
+    query = _query(parsed)
+    proxy = {"name": _label(parsed, host), "type": "tuic", "server": host, "port": port, "uuid": uuid,
+             "password": password, "udp": True, "skip-cert-verify": query.get("allow_insecure", "0") in ("1", "true")}
+    if query.get("sni"):
+        proxy["sni"] = query["sni"]
+    if query.get("alpn"):
+        proxy["alpn"] = [value for value in query["alpn"].split(",") if value]
+    return proxy
+
+
+PARSERS = {"ss": _parse_ss, "vmess": _parse_vmess, "trojan": _parse_trojan, "vless": _parse_vless,
+           "hysteria2": _parse_hy2, "hy2": _parse_hy2, "tuic": _parse_tuic}
+RESERVED = {"DIRECT", "PROXY", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"}
+
+
+def convert_nodes(text):
+    if LINK.search(text):
+        decoded = text
+    else:
+        try:
+            decoded = _b64(text)
+        except (ValueError, binascii.Error, UnicodeError):
+            return None
+    proxies = []
+    for line in decoded.splitlines():
+        line = line.strip()
+        if "://" not in line:
+            continue
+        parser = PARSERS.get(line.split("://", 1)[0].lower())
+        if not parser:
+            continue
+        try:
+            proxy = parser(line)
+        except (ValueError, KeyError, TypeError, UnicodeError, json.JSONDecodeError):
+            proxy = None
+        if proxy and proxy.get("server") and proxy.get("port"):
+            proxies.append(proxy)
+    if not proxies:
+        return None
+    seen, names = {}, []
+    for proxy in proxies:
+        base = str(proxy.get("name") or "节点").strip() or "节点"
+        count = seen.get(base, 0) + 1
+        seen[base] = count
+        name = base if count == 1 else f"{base} {count}"
+        while name in RESERVED:
+            name += " ·"
+        proxy["name"] = name
+        names.append(name)
+    config = {"proxies": proxies,
+              "proxy-groups": [{"name": "PROXY", "type": "select", "proxies": [*names, "DIRECT"]}],
+              "rules": ["MATCH,PROXY"]}
+    return yaml.safe_dump(config, allow_unicode=True, sort_keys=False, width=1000)
+
+
+LINK = re.compile(r"(?m)^\s*(?:ss|ssr|vmess|vless|trojan|hysteria2?|hy2|tuic)://")
 
 
 def node_list(text):
+    if LINK.search(text):
+        return True
     compact = re.sub(r"\s+", "", text)
     if len(compact) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", compact):
         return False
@@ -370,7 +627,10 @@ def node_list(text):
 
 async def checked(text, identity):
     if node_list(text):
-        raise HTTPException(422, "订阅返回的是 Base64 节点列表，请改用机场的 Clash / Mihomo 订阅链接，或直接粘贴 YAML")
+        converted = convert_nodes(text)
+        if not converted:
+            raise HTTPException(422, "订阅返回的是 Base64 节点列表，但没有识别出可用节点；请改用机场的 Clash / Mihomo 订阅链接")
+        text = converted
     if re.match(r"\s*<(!doctype|html)", text[:128], re.I):
         raise HTTPException(422, "订阅地址返回了网页，可能需要登录或链接已失效")
     try:

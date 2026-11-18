@@ -58,7 +58,7 @@ function ProfileEditor({item, close, saved}) {
         <input type="password" autoComplete="off" spellCheck={false} placeholder="https://…" value={url}
           required={!item && kind === 'url'} onChange={e => setUrl(e.target.value)} disabled={busy}/>
       </label>}
-      {!item && kind === 'url' && <p className="form-note">直连失败时会自动尝试本机 Mihomo 代理；仍无法下载时，可在能访问订阅的设备上打开链接，把 YAML 粘贴到「YAML 文件或文本」导入。</p>}
+      {!item && kind === 'url' && <p className="form-note">Base64 节点列表会自动转换为 Clash 配置；直连失败时会尝试本机 Mihomo 代理。仍无法下载时，可在能访问订阅的设备上打开链接，把 YAML 粘贴到「YAML 文件或文本」导入。</p>}
       {(kind === 'yaml' || item) && <>
         <label>{item ? '替换配置文件' : '配置文件'}<input type="file" accept=".yaml,.yml,.json" onChange={load} disabled={busy}/></label>
         <label>配置内容<textarea placeholder="粘贴 Clash / Mihomo YAML" rows={10} value={text} onChange={e => setText(e.target.value)} disabled={!ready || busy} required/></label>
