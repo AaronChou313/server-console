@@ -121,13 +121,15 @@ async def probe(client, item):
     # Keep HTML pages and redirects to login pages; drop APIs, databases and protocol noise.
     if status >= 400 or (not markup and status < 300):
         return None
+    match = TITLE.search(text) if markup else None
+    # A 200 HTML page without a title is usually a machine endpoint (Tailscale peer API, proxies).
+    if status < 300 and markup and not match:
+        return None
     title = ""
-    if markup:
-        match = TITLE.search(text)
-        if match:
-            title = " ".join(html.unescape(match.group(1)).split())[:80]
-            if title.lower().startswith("directory listing"):
-                title = ""
+    if match:
+        title = " ".join(html.unescape(match.group(1)).split())[:80]
+        if title.lower().startswith("directory listing"):
+            title = ""
     return {**item, "title": title, "server": server}
 
 
