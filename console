@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$PATH:$HOME/.local/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export SERVER_CONSOLE_STATE="${SERVER_CONSOLE_STATE:-$HOME/.config/server-console}"
+label=local.server-console
+unit=server-console.service
+case "$(uname -s)" in
+  Darwin) manager=launchd; service_file="$HOME/Library/LaunchAgents/$label.plist"; domain="gui/$(id -u)";;
+  Linux) manager=systemd; service_file="$HOME/.config/systemd/user/$unit";;
+  *) echo "Server Console 仅支持 macOS 和 Linux 服务端" >&2; exit 1;;
+esac
+bootstrap() {
+  local result attempt
+  for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    if result="$(launchctl bootstrap "$domain" "$service_file" 2>&1)"; then return; fi
+    sleep 0.25
+  done
+  printf '%s\n' "$result" >&2
+  return 1
+}
+python="$PWD/.venv/bin/python"
+command="${1:-help}"
+if [ "$#" -gt 0 ]; then shift; fi
+case "$command" in
+  setup)
+    python3 -m venv .venv
+    "$python" -m pip install -r requirements.txt
+    npm ci --prefix frontend
+    npm run build --prefix frontend
+    ;;
+  password|generate-password)
+    "$python" -m server.runtime "$command"
+    ;;
+  run)
+    host="${SERVER_CONSOLE_HOST:-127.0.0.1}"
+    port="${SERVER_CONSOLE_PORT:-9786}"
+    exec "$python" -m uvicorn server.main:app --host "$host" --port "$port" --ws-max-size 16777216 --timeout-graceful-shutdown 4 --no-access-log "$@"
+    ;;
+  install)
+    "$python" -m server.service "$manager" "$service_file" "$@"
+    if [ "$manager" = launchd ]; then
+      if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
+      launchctl enable "$domain/$label"
+      bootstrap
+    else
+      systemctl --user daemon-reload
+      systemctl --user enable "$unit"
+      systemctl --user restart "$unit"
+    fi
+    ;;
+  start|stop|restart|status)
+    if [ "$manager" = launchd ]; then
+      case "$command" in
+        start)
+          if ! launchctl print "$domain/$label" >/dev/null 2>&1; then bootstrap; fi
+          ;;
+        stop)
+          if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
+          ;;
+        restart)
+          if launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootout "$domain/$label"; fi
+          bootstrap
+          ;;
+        status) launchctl print "$domain/$label";;
+      esac
+    else
+      systemctl --user "$command" "$unit"
+    fi
+    ;;
+  logs)
+    if [ "$manager" = launchd ]; then
+      tail -n 80 -F "$SERVER_CONSOLE_STATE/service.log"
+    else
+      journalctl --user -u "$unit" -n 80 -f
+    fi
+    ;;
+  help|--help|-h)
+    cat <<'HELP'
+./console setup                    创建虚拟环境并构建前端
+./console password                 设置或更改本地管理员密码
+./console generate-password        生成首次登录密码并保存到私有目录
+./console run                      前台运行，默认 http://127.0.0.1:9786
+./console install [--host ADDRESS] [--port PORT]
+                                   安装并启动当前用户的常驻服务
+./console start|stop|restart|status|logs
+                                   管理已安装的常驻服务
+HELP
+    ;;
+  *) echo "未知命令：$command" >&2; exit 2;;
+esac
