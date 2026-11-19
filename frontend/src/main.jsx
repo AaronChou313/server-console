@@ -4,6 +4,7 @@ import {ArrowRight, Box, Cable, ChevronDown, Command, LayoutDashboard, LayoutGri
 import {api, useResource} from './api'
 import {Badge, Button, CardTitle, ErrorNotice, Loading, Modal, PageTitle} from './ui'
 import Overview from './Overview'
+import DeviceSwitcher from './DeviceSwitcher'
 import AppsPage from './AppsPage'
 import DshPage from './DshPage'
 import ProxyPage from './ProxyPage'
@@ -148,7 +149,10 @@ function Dashboard({onLogout, theme, setTheme, dark}) {
       {!hidden && <header className="topbar">
         <div className="topbar-left">
           <Button icon={Menu} className="mobile-only" aria-label="打开导航" onClick={() => setMobileNav(true)}/>
-          <div className="breadcrumb"><Server size={15}/><span>{overview.data?.hostname || '主机'}</span><span className="slash">/</span><strong>{pages[page][1]}</strong></div>
+          <div className="breadcrumb">
+            <DeviceSwitcher hostname={overview.data?.hostname || '主机'}/>
+            <span className="slash">/</span><strong>{pages[page][1]}</strong>
+          </div>
         </div>
         <div className="topbar-right">
           <span className="topbar-platform">{overview.data?.os || ''}</span>

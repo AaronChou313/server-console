@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import apps, docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
+from . import apps, devices, docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
 from .runtime import ROOT, STATE, binary, config, private_dir, verify_password
 
 COOKIE = "sc_session"
@@ -31,8 +31,12 @@ def same_origin(connection):
 @asynccontextmanager
 async def lifespan(_):
     await mihomo.restore()
-    yield
-    await asyncio.gather(dsh.stop(), mihomo.stop(), apps.stop())
+    devices.discovery = devices.Discovery()
+    devices.discovery.start()
+    try:
+        yield
+    finally:
+        await asyncio.gather(dsh.stop(), mihomo.stop(), apps.stop(), devices.discovery.stop())
 
 
 app = FastAPI(title="Server Console", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -58,7 +62,8 @@ class WebAccess:
                     message = "请求来源无效"
                 elif path.startswith("/api/") and request.headers.get("x-server-console") != "1":
                     message = "缺少请求标识"
-            if not message and path not in ("/api/auth", "/api/login") and not authenticated(request):
+            public = path in ("/api/auth", "/api/login") or (path == devices.IDENTITY and request.method == "GET")
+            if not message and not public and not authenticated(request):
                 message, status = "请先登录", 401
             if message:
                 await JSONResponse({"detail": message}, status_code=status)(scope, receive, send)
@@ -67,7 +72,7 @@ class WebAccess:
 
 
 app.add_middleware(WebAccess)
-for module in [host, terminal, docker, ssh, dsh, mihomo, apps]:
+for module in [host, terminal, docker, ssh, dsh, mihomo, apps, devices]:
     app.include_router(module.router)
 
 
