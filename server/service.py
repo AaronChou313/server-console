@@ -40,7 +40,7 @@ def main():
         "PATH": PATH, "SERVER_CONSOLE_STATE": str(STATE), "SERVER_CONSOLE_HOST": args.host,
         "SERVER_CONSOLE_PORT": str(args.port),
     }
-    overrides = ["SERVER_CONSOLE_" + tool for tool in ("CODEX", "DSH", "DOCKER", "TAILSCALE", "ZELLIJ", "SSH", "MIHOMO")]
+    overrides = ["SERVER_CONSOLE_" + tool for tool in ("CODEX", "DSH", "DOCKER", "TAILSCALE", "ZELLIJ", "SSH", "MIHOMO", "CODE_SERVER")]
     for name in ("CODEX_HOME", "DOCKER_HOST", "DOCKER_CONTEXT",
                  "SERVER_CONSOLE_MIHOMO_BROKER", "SERVER_CONSOLE_TOOL_PROXY", "ZELLIJ_SOCKET_DIR", "SERVER_CONSOLE_GEO_MIRROR", "SERVER_CONSOLE_GITHUB_MIRROR", *overrides):
         if name in os.environ:

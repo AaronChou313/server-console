@@ -350,6 +350,7 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 | 概览 | 查看 CPU、内存、用户磁盘卷、网络速率与运行时间。每 3 秒采样，趋势保留在当前浏览器内存中。 |
 | 我的应用 | 自动发现本机监听并返回 HTML 的 Web 服务；点击直接打开，回环地址服务经控制台临时转发。 |
 | 终端 | 新建项目 Shell，或连接已有的 Zellij 会话。浏览器关闭、刷新和 WebSocket 重连都会保留服务器进程。 |
+| 代码编辑器 | 用 code-server 在浏览器打开主机目录，编辑并保存文件。 |
 | Docker | 查看 Engine、容器、CPU 和内存，启动、停止、重启、查看日志或进入容器。 |
 | SSH | 用系统 OpenSSH 发起连接。保存前在 `~/.ssh/config.server-console.bak` 留备份。 |
 | 网络 | 查看接口、连接、Tailscale Peer 和链路；支持 Ping、TCP、Tailscale Ping、Netcheck。 |
@@ -374,6 +375,14 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 - 新会话默认使用 Zellij 的 Locked 模式；需要 Zellij 快捷键时按 `Ctrl+g`。
 - 新建会话支持拖选后复制到浏览器所在设备。若网页写入剪贴板被限制，点击工具栏「复制选择」。旧会话或 TUI 捕获鼠标时，Windows/Linux 按住 `Shift`、Mac 按住 `Option` 再拖选。手机底部工具栏提供 Esc、Tab、方向键和常用 Ctrl 键。
 - 单文件上传上限 25 MiB，保存在 `~/.config/server-console/uploads/`。
+
+### 代码编辑器
+
+在需要编辑代码的主机安装 [code-server](https://coder.com/docs/code-server/install)。macOS 可以运行 `brew install code-server`，Linux 可使用官方安装器或下载安装包。将 `code-server` 放入控制台服务的 PATH（例如 `~/.local/bin`），也可用 `SERVER_CONSOLE_CODE_SERVER=/绝对路径/code-server` 安装控制台常驻服务。控制台首次打开目录时会启动编辑器，无需另启 code-server 服务。
+
+登录后进入「代码编辑器」，选择常用目录或输入绝对路径，点击「打开编辑器」。文件由部署控制台的系统用户直接读写。编辑器占用整个浏览器页面，返回控制台可用浏览器后退。
+
+远程电脑和平板建议通过控制台的 HTTPS 域名访问。已有反向代理时，确保 `/editor/` 的 HTTP 请求和 WebSocket 都转发到控制台。iPad 可在 Safari 中打开，也可把编辑器添加到主屏幕。[code-server 的 iPad 使用说明](https://coder.com/docs/code-server/ipad)
 
 ### 我的应用
 

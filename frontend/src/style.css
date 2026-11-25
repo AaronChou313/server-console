@@ -421,3 +421,7 @@ td { font-family: var(--mono); }
   .device-popover { position: fixed; top: 58px; left: 8px; right: 8px; width: auto; }
   .device-details summary { min-height: 36px; align-content: center; }
 }
+
+.editor-card { max-width: 660px; }
+.editor-card .form { margin-top: 16px; }
+.editor-card input { font-family: var(--mono); }

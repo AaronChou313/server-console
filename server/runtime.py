@@ -85,7 +85,7 @@ def verify_password(password):
 
 
 def binary(name):
-    override = os.getenv("SERVER_CONSOLE_" + name.upper())
+    override = os.getenv("SERVER_CONSOLE_" + name.upper().replace("-", "_"))
     if override:
         return shutil.which(override, path=PATH)
     result = shutil.which(name, path=PATH)

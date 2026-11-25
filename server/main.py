@@ -6,10 +6,10 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from . import apps, devices, docker, dsh, host, mihomo, mihomo_broker, ssh, terminal
+from . import apps, devices, docker, dsh, editor, host, mihomo, mihomo_broker, ssh, terminal
 from .runtime import ROOT, STATE, binary, config, private_dir, verify_password
 
 COOKIE = "sc_session"
@@ -36,7 +36,7 @@ async def lifespan(_):
     try:
         yield
     finally:
-        await asyncio.gather(dsh.stop(), mihomo.stop(), apps.stop(), devices.discovery.stop())
+        await asyncio.gather(dsh.stop(), mihomo.stop(), apps.stop(), devices.discovery.stop(), editor.stop())
 
 
 app = FastAPI(title="Server Console", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
@@ -48,12 +48,16 @@ class WebAccess:
 
     async def __call__(self, scope, receive, send):
         kind, path = scope["type"], scope.get("path", "")
+        editor_path = path == editor.PREFIX or path.startswith(editor.PREFIX + "/")
         if kind == "websocket":
             connection = Request({**scope, "type": "http"})
             if not authenticated(connection) or not same_origin(connection):
                 await send({"type": "websocket.close", "code": 4401})
                 return
-        elif kind == "http" and path.startswith(("/api/", "/dsh/", "/apps/")):
+            if editor_path:
+                token = connection.cookies[COOKIE]
+                scope["editor_session"] = (token, sessions[token])
+        elif kind == "http" and (editor_path or path.startswith(("/api/", "/dsh/", "/apps/"))):
             request = Request(scope)
             message = None
             status = 403
@@ -64,6 +68,11 @@ class WebAccess:
                     message = "缺少请求标识"
             public = path in ("/api/auth", "/api/login") or (path == devices.IDENTITY and request.method == "GET")
             if not message and not public and not authenticated(request):
+                if path in {editor.PREFIX, editor.PREFIX + "/"} and request.method == "GET" and (
+                    "text/html" in request.headers.get("accept", "")
+                ):
+                    await RedirectResponse("/#editor", status_code=303)(scope, receive, send)
+                    return
                 message, status = "请先登录", 401
             if message:
                 await JSONResponse({"detail": message}, status_code=status)(scope, receive, send)
@@ -72,7 +81,7 @@ class WebAccess:
 
 
 app.add_middleware(WebAccess)
-for module in [host, terminal, docker, ssh, dsh, mihomo, apps, devices]:
+for module in [host, terminal, docker, ssh, dsh, editor, mihomo, apps, devices]:
     app.include_router(module.router)
 
 
@@ -102,7 +111,9 @@ async def login(request: Request, form: Login):
     if not await asyncio.to_thread(verify_password, form.password):
         raise HTTPException(401, "管理员密码错误")
     attempts.pop(ip, None)
-    sessions.pop(request.cookies.get(COOKIE), None)
+    previous = request.cookies.get(COOKIE)
+    sessions.pop(previous, None)
+    editor.disconnect(previous)
     token = secrets.token_urlsafe(32)
     sessions[token] = now + TTL
     response = JSONResponse({"ok": True})
@@ -112,8 +123,10 @@ async def login(request: Request, form: Login):
 
 
 @app.post("/api/logout")
-def logout(request: Request):
-    sessions.pop(request.cookies.get(COOKIE), None)
+async def logout(request: Request):
+    previous = request.cookies.get(COOKIE)
+    sessions.pop(previous, None)
+    editor.disconnect(previous)
     response = JSONResponse({"ok": True})
     response.delete_cookie(COOKIE)
     return response
@@ -121,7 +134,7 @@ def logout(request: Request):
 
 @app.get("/api/tools")
 def tools():
-    return {**{name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale")},
+    return {**{name: bool(binary(name)) for name in ("zellij", "codex", "dsh", "docker", "tailscale", "code-server")},
             "mihomo": bool(mihomo.executable() or mihomo_broker.socket_path())}
 
 
@@ -149,7 +162,7 @@ async def upload(request: Request):
 
 @app.get("/{path:path}")
 def frontend(path: str):
-    if path in {"api", "ws", "dsh", "apps"} or path.startswith(("api/", "ws/", "dsh/", "apps/")):
+    if path in {"api", "ws", "dsh", "apps", "editor"} or path.startswith(("api/", "ws/", "dsh/", "apps/", "editor/")):
         raise HTTPException(404)
     actual = (DIST / path).resolve()
     if actual.is_relative_to(DIST) and actual.is_file():
