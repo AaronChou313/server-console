@@ -1,10 +1,10 @@
 import React, {useState} from 'react'
 import {FolderCode} from 'lucide-react'
-import {api, useResource} from './api'
+import {api} from './api'
+import DirectoryField from './DirectoryField'
 import {CardTitle, ErrorNotice, Loading, PageTitle} from './ui'
 
 export default function EditorPage({installed}) {
-  const projects = useResource(installed ? '/projects' : null)
   const [folder, setFolder] = useState(() => localStorage.getItem('console-editor-folder') || '~')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -15,8 +15,8 @@ export default function EditorPage({installed}) {
     setBusy(true)
     setError('')
     try {
-      const {url} = await api('/editor/open', {method: 'POST', body: {folder: folder.trim()}})
-      localStorage.setItem('console-editor-folder', folder.trim())
+      const {url} = await api('/editor/open', {method: 'POST', body: {folder}})
+      localStorage.setItem('console-editor-folder', folder)
       window.location.assign(url)
     } catch (failure) {
       setError(failure.message)
@@ -30,20 +30,11 @@ export default function EditorPage({installed}) {
       installed ? <section className="card editor-card">
         <CardTitle icon={FolderCode} title="打开主机目录"/>
         <form className="form" onSubmit={open}>
-          {!!projects.data?.length && <label>常用目录
-            <select value={projects.data.includes(folder) ? folder : ''} onChange={event => setFolder(event.target.value)}>
-              <option value="" disabled>选择目录</option>
-              {projects.data.map(path => <option value={path} key={path}>{path}</option>)}
-            </select>
-          </label>}
-          <label>主机上的目录
-            <input value={folder} onChange={event => setFolder(event.target.value)} maxLength={4096}
-              required placeholder="/home/user/project" autoComplete="off" autoCapitalize="none" spellCheck={false}/>
-          </label>
+          <DirectoryField label="主机上的目录" value={folder} onChange={setFolder} disabled={busy}/>
           {needsHttps && <p className="section-note">平板、剪贴板和 Webview 建议使用控制台的 HTTPS 地址。</p>}
           <ErrorNotice>{error}</ErrorNotice>
           <div className="form-actions">
-            <button className="button primary" disabled={busy || !folder.trim()}>
+            <button className="button primary" disabled={busy || !folder}>
               <FolderCode size={16} aria-hidden="true"/> {busy ? '正在打开…' : '打开编辑器'}
             </button>
           </div>

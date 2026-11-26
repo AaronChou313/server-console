@@ -30,7 +30,7 @@ export function Empty({icon: Icon, title, children}) {
   return <div className="empty">{Icon && <span className="page-icon"><Icon size={23}/></span>}<strong>{title}</strong>{children}</div>
 }
 
-export function Modal({title, onClose, children}) {
+export function Modal({title, onClose, children, className = ''}) {
   const ref = useRef(null)
   const titleId = useId()
   useEffect(() => {
@@ -38,7 +38,11 @@ export function Modal({title, onClose, children}) {
     el.showModal()
     return () => el.close()
   }, [])
-  return <dialog ref={ref} className="modal" aria-labelledby={titleId} onCancel={event => {event.preventDefault(); onClose()}}>
+  return <dialog ref={ref} className={`modal ${className}`} aria-labelledby={titleId} onCancel={event => {
+    event.preventDefault()
+    event.stopPropagation()
+    onClose()
+  }}>
     <header><h2 id={titleId}>{title}</h2><Button icon={X} aria-label="关闭" onClick={onClose}/></header>
     <div className="modal-content">{children}</div>
   </dialog>

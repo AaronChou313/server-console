@@ -369,6 +369,7 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 
 ### 终端和 Codex
 
+- 新建或恢复会话时，点击「浏览目录」可从主目录或根目录逐级选择主机上的目录，也可以显示隐藏目录。
 - 终端由 Zellij 承载。浏览器标签关闭或刷新不会终止服务器上的进程；用「结束」明确停止。
 - 「运行中的会话」可附着到原会话。关闭标签、刷新页面和网络重连都会保留会话。「恢复历史」另建 Zellij 会话并调用 `codex resume`。
 - 「结束」会请求 Zellij 退出指定会话。会话卡住时，在同一个对话框里可以选择「强制结束」，其中运行的进程会被中止。
@@ -380,7 +381,7 @@ SERVER_CONSOLE_TOOL_PROXY=http://127.0.0.1:17890 ./console install
 
 在需要编辑代码的主机安装 [code-server](https://coder.com/docs/code-server/install)。macOS 可以运行 `brew install code-server`，Linux 可使用官方安装器或下载安装包。将 `code-server` 放入控制台服务的 PATH（例如 `~/.local/bin`），也可用 `SERVER_CONSOLE_CODE_SERVER=/绝对路径/code-server` 安装控制台常驻服务。控制台首次打开目录时会启动编辑器，无需另启 code-server 服务。
 
-登录后进入「代码编辑器」，选择常用目录或输入绝对路径，点击「打开编辑器」。文件由部署控制台的系统用户直接读写。编辑器占用整个浏览器页面，返回控制台可用浏览器后退。
+登录后进入「代码编辑器」，点击「浏览目录」选择主机上的目录，再点「打开编辑器」。文件由部署控制台的系统用户直接读写。编辑器占用整个浏览器页面，返回控制台可用浏览器后退。
 
 远程电脑和平板建议通过控制台的 HTTPS 域名访问。已有反向代理时，确保 `/editor/` 的 HTTP 请求和 WebSocket 都转发到控制台。iPad 可在 Safari 中打开，也可把编辑器添加到主屏幕。[code-server 的 iPad 使用说明](https://coder.com/docs/code-server/ipad)
 

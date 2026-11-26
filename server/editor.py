@@ -88,7 +88,7 @@ async def start():
 
 @router.post("/api/editor/open")
 async def open_workspace(workspace: Workspace):
-    folder = directory(workspace.folder.strip())
+    folder = directory(workspace.folder)
     await start()
     return {"url": PREFIX + "/?" + urlencode({"folder": str(folder)})}
 

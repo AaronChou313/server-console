@@ -10,10 +10,10 @@ import time
 from pathlib import Path
 
 import psutil
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from .runtime import HOME, binary, require, run
+from .runtime import HOME, binary, directory, require, run
 
 router = APIRouter()
 previous = None
@@ -155,6 +155,27 @@ async def probe(form: Probe):
     else:
         raise HTTPException(400, "不支持该检测方式")
     return {"ok": code == 0, "output": (out + err).strip()}
+
+
+@router.get("/api/directories")
+def directories(path: str = Query(default="~", max_length=4096)):
+    folder = directory(path)
+    entries = []
+    try:
+        with os.scandir(folder) as children:
+            for child in children:
+                try:
+                    if child.is_dir():
+                        entries.append({"name": child.name, "path": child.path})
+                except OSError:
+                    continue
+    except OSError as error:
+        raise HTTPException(400, "无法读取此目录，请返回上一级或选择其他目录") from error
+    return {
+        "path": str(folder),
+        "parent": str(folder.parent) if folder != folder.parent else None,
+        "directories": sorted(entries, key=lambda child: (child["name"].casefold(), child["name"])),
+    }
 
 
 @router.get("/api/projects")

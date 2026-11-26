@@ -4,6 +4,7 @@ import {Terminal} from '@xterm/xterm'
 import {FitAddon} from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import {api, useResource} from './api'
+import DirectoryField from './DirectoryField'
 import {Button, Empty, ErrorNotice, Modal, PageTitle} from './ui'
 
 const encoder = new TextEncoder()
@@ -247,7 +248,6 @@ async function copyText(value) {
 }
 
 function SessionForm({kind, mode, onClose, onCreate}) {
-  const projects = useResource('/projects')
   const [cwd, setCwd] = useState(localStorage.getItem('console-project') || '~')
   const [name, setName] = useState('')
   const [resume, setResume] = useState('project')
@@ -270,11 +270,7 @@ function SessionForm({kind, mode, onClose, onCreate}) {
   }
   return <Modal title={title} onClose={() => {if (!busy) onClose()}}>
     <form className="form" onSubmit={submit}>
-      <label>项目目录<input list="projects" value={cwd} required onChange={e => setCwd(e.target.value)} placeholder="/path/to/project" autoFocus/></label>
-      <datalist id="projects">{projects.data?.map(path => <option key={path} value={path}/>)}</datalist>
-      {projects.data?.length > 0 && <label>常用目录<select value={projects.data.includes(cwd) ? cwd : ''} onChange={e => e.target.value && setCwd(e.target.value)}>
-        <option value="">选择主机目录</option>{projects.data.map(path => <option key={path} value={path}>{path}</option>)}
-      </select></label>}
+      <DirectoryField label="项目目录" value={cwd} onChange={setCwd} disabled={busy}/>
       {kind === 'codex' && mode === 'new' && <p className="form-note">远程服务器首次登录时，可在终端运行 <code>codex login --device-auth</code>。</p>}
       <label>标签名称<input value={name} maxLength={100} onChange={e => setName(e.target.value)} placeholder="可选"/></label>
       {mode === 'resume' && <>
